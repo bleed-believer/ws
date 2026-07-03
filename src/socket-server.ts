@@ -1,11 +1,11 @@
 import type { RouteParameters, Server, SocketServerInject, WebSocketCallback, WebSocketObject, SocketServerOptions } from './interfaces/index.js';
-import type { ParamData, MatchFunction, MatchResult } from 'path-to-regexp';
+import type { ParamData, MatchResult } from 'path-to-regexp';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
 import { WebSocketServer } from 'ws';
 import { SocketServerRouter } from './socket-server-router.js';
-import { match } from 'path-to-regexp';
+import { createRouteMatcher } from './route-matcher.js';
 
 /**
  * Router-based WebSocket server that attaches to an existing HTTP(S)
@@ -61,9 +61,7 @@ export class SocketServer extends SocketServerRouter {
             .routes()
             .map(x => ({
                 callback: x.callback,
-                matchFn: typeof x.path !== 'string'
-                ?   ((path: string) => ({ path, params: {} })) as MatchFunction<ParamData>
-                :   match(x.path)
+                matchFn: createRouteMatcher(x.path)
             }));
 
         const wss = new this.#injected.WebSocketServer({

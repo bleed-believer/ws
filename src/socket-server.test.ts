@@ -225,6 +225,156 @@ describe('SocketServer', () => {
         t.assert.strictEqual(destroyed, true);
     });
 
+    it('Extract a wildcard param as an array of segments', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+
+        new SocketServer({}, fake)
+            .use('/files/*rest', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/files/a/b/c' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.strictEqual(upgrade.ws.path, '/files/a/b/c');
+        t.assert.deepStrictEqual({ ...upgrade.ws.params }, { rest: [ 'a', 'b', 'c' ] });
+    });
+
+    it('Extract multiple params within a single segment', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+
+        new SocketServer({}, fake)
+            .use('/file/:name.:ext', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/file/report.pdf' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.deepStrictEqual({ ...upgrade.ws.params }, { name: 'report', ext: 'pdf' });
+    });
+
+    it('Match an optional group ({/:id}) when the segment is present', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+
+        new SocketServer({}, fake)
+            .use('/user{/:id}', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/user/123' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.strictEqual(upgrade.ws.path, '/user/123');
+        t.assert.deepStrictEqual({ ...upgrade.ws.params }, { id: '123' });
+    });
+
+    it('Match an optional group ({/:id}) when the segment is absent', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+
+        new SocketServer({}, fake)
+            .use('/user{/:id}', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/user' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        t.assert.strictEqual(fake.upgrades.length, 1);
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.strictEqual(upgrade.ws.path, '/user');
+        t.assert.deepStrictEqual({ ...upgrade.ws.params }, {});
+    });
+
+    it('Match several optional groups ({/:id}{/:action}) independently', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+        const results: Record<string, unknown>[] = [];
+
+        new SocketServer({}, fake)
+            .use('/user{/:id}{/:action}', ws => { results.push({ ...ws.params }); })
+            .bootstrap(server);
+
+        for (const url of [ '/user', '/user/5', '/user/5/edit' ]) {
+            server.emit(
+                'upgrade',
+                { url } as IncomingMessage,
+                {} as unknown as Duplex,
+                Buffer.alloc(0)
+            );
+        }
+
+        await Promise.all(fake.upgrades.map(u => u.done));
+
+        t.assert.deepStrictEqual(results, [
+            {},
+            { id: '5' },
+            { id: '5', action: 'edit' }
+        ]);
+    });
+
+    it('Tolerate a trailing slash on the request path (Express parity)', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+
+        new SocketServer({}, fake)
+            .use('/user/:id', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/user/123/' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        t.assert.strictEqual(fake.upgrades.length, 1);
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.deepStrictEqual({ ...upgrade.ws.params }, { id: '123' });
+    });
+
+    it('Reject the removed :id? syntax at bootstrap, matching Express', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+
+        // Express 5 / path-to-regexp v8 dropped the `?` modifier; the
+        // optional group `{/:id}` must be used instead.
+        t.assert.throws(() => {
+            new SocketServer({}, fake)
+                .use('/user/:id?' as string, () => {})
+                .bootstrap(server);
+        });
+    });
+
     it('Detach the upgrade listener when the server closes', (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;

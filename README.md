@@ -13,7 +13,8 @@ parameters, nested routers, and an Express-style `next()` chain.
 - **Attaches to an existing HTTP(S) server** — no separate port, just hooks into
   the server's `upgrade` event.
 - **Route matching powered by `path-to-regexp`** — named parameters (`:id`),
-  optional parameters (`:id?`) and wildcards (`*rest`).
+  optional groups (`{/:id}`) and named wildcards (`*rest`), using the same
+  `path-to-regexp` v8 syntax as Express 5.
 - **Typed route parameters** — the shape of `ws.params` is inferred from the
   route string at compile time.
 - **Composable routers** — nest `SocketServerRouter` instances and mount them
@@ -186,7 +187,7 @@ new SocketServer()
         ws.params.id;
         ws.params.action;
     })
-    .use('/user/:id/:action?', (ws) => {
+    .use('/user/:id{/:action}', (ws) => {
         // ws.params: { id: string; action?: string }
     })
     .use('/files/*rest', (ws) => {
