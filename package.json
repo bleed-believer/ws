@@ -1,0 +1,64 @@
+{
+  "name": "@bleed-believer/ws",
+  "version": "0.0.0",
+  "description": "Router-based WebSocket layer for ws, with path-to-regexp route matching and TypeScript support.",
+  "type": "module",
+  "license": "MIT",
+  "author": "BleedBeliever",
+  "homepage": "https://github.com/bleed-believer/ws#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bleed-believer/ws.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bleed-believer/ws/issues"
+  },
+  "keywords": [
+    "websocket",
+    "ws",
+    "router",
+    "routing",
+    "path-to-regexp",
+    "typescript",
+    "esm"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --import @bleed-believer/cli --test --",
+    "build:clear": "rm -rf ./dist",
+    "build:tslib": "bleed build --config ./tsconfig.build.json",
+    "build:defts": "tsc --project ./tsconfig.build.json",
+    "build": "node --run build:clear && node --run build:tslib && node --run build:defts",
+    "prepublishOnly": "node --run build"
+  },
+  "dependencies": {
+    "path-to-regexp": "^8.0.0"
+  },
+  "peerDependencies": {
+    "ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "@bleed-believer/cli": "^1.0.3",
+    "@types/node": "^26.1.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^6.0.3"
+  }
+}
