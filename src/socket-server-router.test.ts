@@ -1,9 +1,9 @@
-import { SocketRouter } from './socket-router.js';
+import { SocketServerRouter } from './socket-server-router.js';
 import { describe, it } from 'node:test';
 
-describe('SocketRouter', () => {
+describe('SocketServerRouter', () => {
     it('Resolve simple router', (t: it.TestContext) => {
-        const routes = new SocketRouter()
+        const routes = new SocketServerRouter()
             .use('foo', () => 'fn-01')
             .use('bar', () => 'fn-02')
             .routes()
@@ -23,16 +23,16 @@ describe('SocketRouter', () => {
     });
 
     it('Resolve complex router', (t: it.TestContext) => {
-        const routes = new SocketRouter()
+        const routes = new SocketServerRouter()
             .use(() => 'fn-01')
-            .use(new SocketRouter()
+            .use(new SocketServerRouter()
                 .use(() => 'fn-02')
                 .use('bleed', () => 'fn-03')
                 .use('break', () => 'fn-04')
             )
             .use('foo', () => 'fn-05')
             .use('bar', () => 'fn-06')
-            .use('bak', new SocketRouter()
+            .use('bak', new SocketServerRouter()
                 .use(() => 'fn-07')
                 .use('lol', () => 'fn-08')
                 .use('kek', () => 'fn-09')

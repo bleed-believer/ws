@@ -1,27 +1,29 @@
-import type { RouteParameters, Server, SocketInject, WebSocketCallback, WebSocketObject } from './interfaces/index.js';
+import type { RouteParameters, Server, SocketInject, WebSocketCallback, WebSocketObject, SocketServerOptions } from './interfaces/index.js';
 import type { ParamData, MatchFunction, MatchResult } from 'path-to-regexp';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
 import { WebSocketServer } from 'ws';
-import { SocketRouter } from './socket-router.js';
+import { SocketServerRouter } from './socket-server-router.js';
 import { match } from 'path-to-regexp';
 
-export class Socket extends SocketRouter {
+export class SocketServer extends SocketServerRouter {
     #injected: Required<SocketInject>;
+    #options?: SocketServerOptions;
 
-    constructor(inject?: SocketInject) {
+    constructor(options?: SocketServerOptions, inject?: SocketInject) {
         super();
+        this.#options = options;
         this.#injected = {
             WebSocketServer: inject?.WebSocketServer?.bind(inject)  ?? WebSocketServer
         };
     }
 
-    override use(router: SocketRouter): Socket;
-    override use(callback: WebSocketCallback<ParamData>): Socket;
-    override use(path: string, router: SocketRouter): Socket;
-    override use<P extends string, T extends RouteParameters<P>>(path: P, callback: WebSocketCallback<T>): Socket;
-    override use(...args: [SocketRouter | WebSocketCallback<ParamData>] | [string, SocketRouter | WebSocketCallback<ParamData>]): Socket {
+    override use(router: SocketServerRouter): SocketServer;
+    override use(callback: WebSocketCallback<ParamData>): SocketServer;
+    override use(path: string, router: SocketServerRouter): SocketServer;
+    override use<P extends string, T extends RouteParameters<P>>(path: P, callback: WebSocketCallback<T>): SocketServer;
+    override use(...args: [SocketServerRouter | WebSocketCallback<ParamData>] | [string, SocketServerRouter | WebSocketCallback<ParamData>]): SocketServer {
         super.use(args[0] as any, args[1] as any);
         return this;
     }
@@ -36,7 +38,11 @@ export class Socket extends SocketRouter {
                 :   match(x.path)
             }));
 
-        const wss = new this.#injected.WebSocketServer({ noServer: true });
+        const wss = new this.#injected.WebSocketServer({
+            ...this.#options,
+            noServer: true
+        });
+
         const fnc = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
             const path = new URL(req.url ?? '/', 'http://localhost').pathname;
             const queue: {

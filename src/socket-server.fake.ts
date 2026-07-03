@@ -23,7 +23,7 @@ export interface SocketFakeUpgrade {
     ws: SocketFakeWebSocket;
 }
 
-export class SocketFake implements SocketInject {
+export class SocketServerFake implements SocketInject {
     #upgrades: SocketFakeUpgrade[] = [];
     get upgrades(): SocketFakeUpgrade[] {
         return this.#upgrades;

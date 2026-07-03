@@ -5,10 +5,10 @@ import { describe, it } from 'node:test';
 import { once } from 'node:events';
 import WebSocket from 'ws';
 
-import { SocketRouter } from './socket-router.js';
-import { Socket } from './socket.js';
+import { SocketServerRouter } from './socket-server-router.js';
+import { SocketServer } from './socket-server.js';
 
-async function launch(socket: Socket, t: it.TestContext): Promise<string> {
+async function launch(socket: SocketServer, t: it.TestContext): Promise<string> {
     const server = createServer();
     socket.bootstrap(server);
 
@@ -24,9 +24,9 @@ async function launch(socket: Socket, t: it.TestContext): Promise<string> {
     return `ws://localhost:${port}`;
 }
 
-describe('Socket (e2e)', () => {
+describe('SocketServer (e2e)', () => {
     it('Accepts a connection on a registered route and echoes messages', async (t: it.TestContext) => {
-        const app = new Socket()
+        const app = new SocketServer()
             .use('echo', ws => {
                 ws.addEventListener('message', e => {
                     ws.send(`echo: ${e.data}`);
@@ -46,7 +46,7 @@ describe('Socket (e2e)', () => {
     });
 
     it('Exposes the route params and matched path to the handler', async (t: it.TestContext) => {
-        const app = new Socket()
+        const app = new SocketServer()
             .use('user/:id/posts/:postId', ws => {
                 ws.send(JSON.stringify({
                     params: ws.params,
@@ -69,8 +69,8 @@ describe('Socket (e2e)', () => {
     });
 
     it('Routes connections through nested routers', async (t: it.TestContext) => {
-        const app = new Socket()
-            .use('api', new SocketRouter()
+        const app = new SocketServer()
+            .use('api', new SocketServerRouter()
                 .use('chat/:room', ws => {
                     ws.send(ws.path);
                 })
@@ -88,7 +88,7 @@ describe('Socket (e2e)', () => {
     });
 
     it('Rejects unmatched paths with a 404 response', async (t: it.TestContext) => {
-        const app = new Socket()
+        const app = new SocketServer()
             .use('known', () => {});
 
         const url = await launch(app, t);
@@ -100,7 +100,7 @@ describe('Socket (e2e)', () => {
 
     it('Passes control to the next matching handler with next()', async (t: it.TestContext) => {
         const trace: string[] = [];
-        const app = new Socket()
+        const app = new SocketServer()
             .use((_ws, _req, next) => {
                 trace.push('global');
                 next();
@@ -126,7 +126,7 @@ describe('Socket (e2e)', () => {
     });
 
     it('Closes with 1011 when no handler claims the connection', async (t: it.TestContext) => {
-        const app = new Socket()
+        const app = new SocketServer()
             .use('open', (_ws, _req, next) => next());
 
         const url = await launch(app, t);
@@ -139,7 +139,7 @@ describe('Socket (e2e)', () => {
 
     it('Closes with 1011 when a handler throws an exception', async (t: it.TestContext) => {
         const error = t.mock.method(console, 'error', () => {});
-        const app = new Socket()
+        const app = new SocketServer()
             .use('boom', async () => {
                 throw new Error('kaboom');
             });
@@ -155,7 +155,7 @@ describe('Socket (e2e)', () => {
 
     it('Detaches the upgrade listener when the server closes', async (t: it.TestContext) => {
         const server = createServer();
-        new Socket()
+        new SocketServer()
             .use('any', () => {})
             .bootstrap(server);
 

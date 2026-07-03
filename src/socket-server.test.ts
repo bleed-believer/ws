@@ -5,16 +5,16 @@ import type { Duplex } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 
-import { SocketFake } from './socket.fake.js';
-import { Socket } from './socket.js';
+import { SocketServerFake } from './socket-server.fake.js';
+import { SocketServer } from './socket-server.js';
 
-describe('Socket', () => {
+describe('SocketServer', () => {
     it('Attend a connection with a static path', async (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const calls: string[] = [];
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', () => { calls.push('foo'); })
             .bootstrap(server);
 
@@ -36,10 +36,10 @@ describe('Socket', () => {
     });
 
     it('Extract the params from the path', async (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/user/:id/:action', () => {})
             .bootstrap(server);
 
@@ -59,11 +59,11 @@ describe('Socket', () => {
     });
 
     it('Attend any path when the route is pathless', async (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const calls: string[] = [];
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use(() => { calls.push('any'); })
             .bootstrap(server);
 
@@ -83,11 +83,11 @@ describe('Socket', () => {
     });
 
     it('Pass the control to the next handler with next()', async (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const calls: string[] = [];
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', (_ws, _req, next) => {
                 calls.push('fn-01');
                 next();
@@ -110,11 +110,11 @@ describe('Socket', () => {
     });
 
     it('Stop the chain when a handler does not call next()', async (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const calls: string[] = [];
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', () => { calls.push('fn-01'); })
             .use('/foo', () => { calls.push('fn-02'); })
             .bootstrap(server);
@@ -134,10 +134,10 @@ describe('Socket', () => {
     });
 
     it('Close the connection when no handler claims it', async (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', (_ws, _req, next) => next())
             .use('/foo', (_ws, _req, next) => next())
             .bootstrap(server);
@@ -160,11 +160,11 @@ describe('Socket', () => {
     it('Close the connection when a handler throws', async (t: it.TestContext) => {
         t.mock.method(console, 'error', () => {});
 
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const calls: string[] = [];
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', () => {
                 throw new Error('handler exploded');
             })
@@ -188,7 +188,7 @@ describe('Socket', () => {
     });
 
     it('Reject with 404 when no route matches', (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const writes: string[] = [];
         let destroyed = false;
@@ -203,7 +203,7 @@ describe('Socket', () => {
             }
         } as unknown as Duplex;
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', () => {})
             .bootstrap(server);
 
@@ -220,10 +220,10 @@ describe('Socket', () => {
     });
 
     it('Detach the upgrade listener when the server closes', (t: it.TestContext) => {
-        const fake = new SocketFake();
+        const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
 
-        new Socket(fake)
+        new SocketServer({}, fake)
             .use('/foo', () => {})
             .bootstrap(server);
 
