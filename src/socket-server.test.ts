@@ -115,6 +115,34 @@ describe('SocketServer', () => {
         t.assert.deepStrictEqual(upgrade.ws.closeCalls, []);
     });
 
+    it('Exposes each handler the params of its own route while it runs (Express req.params parity)', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+        const seen: Record<string, unknown>[] = [];
+
+        // Mirrors Express: `ws.params` is a single mutable reference that is
+        // reassigned to the currently executing handler's matched params.
+        new SocketServer({}, fake)
+            .use((ws, _req, next) => { seen.push({ ...ws.params }); next(); })
+            .use('/user/:id', (ws, _req, next) => { seen.push({ ...ws.params }); next(); })
+            .use('/user/:id', ws => { seen.push({ ...ws.params }); })
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/user/7' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.deepStrictEqual(seen, [ {}, { id: '7' }, { id: '7' } ]);
+        // After the chain, the reference reflects the claiming handler.
+        t.assert.deepStrictEqual({ ...upgrade.ws.params }, { id: '7' });
+    });
+
     it('Stop the chain when a handler does not call next()', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
@@ -196,16 +224,11 @@ describe('SocketServer', () => {
     it('Reject with 404 when no route matches', (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
-        const writes: string[] = [];
-        let destroyed = false;
+        const ends: string[] = [];
 
         const duplex = {
-            write: (chunk: unknown) => {
-                writes.push(String(chunk));
-                return true;
-            },
-            destroy: () => {
-                destroyed = true;
+            end: (chunk: unknown) => {
+                ends.push(String(chunk));
             }
         } as unknown as Duplex;
 
@@ -221,8 +244,69 @@ describe('SocketServer', () => {
         );
 
         t.assert.strictEqual(fake.upgrades.length, 0);
-        t.assert.deepStrictEqual(writes, [ 'HTTP/1.1 404 Not Found\r\n\r\n' ]);
-        t.assert.strictEqual(destroyed, true);
+        t.assert.deepStrictEqual(ends, [
+            'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
+        ]);
+    });
+
+    it('Does not normalize dot-segments in the request path (Express parity)', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+        const ends: string[] = [];
+
+        const duplex = {
+            end: (chunk: unknown) => {
+                ends.push(String(chunk));
+            }
+        } as unknown as Duplex;
+
+        // `/admin/../public` must NOT collapse to `/public` and reach the
+        // handler; Express's `parseurl` keeps `..` as a literal segment.
+        new SocketServer({}, fake)
+            .use('/public', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '/admin/../public' } as IncomingMessage,
+            duplex,
+            Buffer.alloc(0)
+        );
+
+        t.assert.strictEqual(fake.upgrades.length, 0);
+        t.assert.deepStrictEqual(ends, [
+            'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
+        ]);
+    });
+
+    it('Does not strip the authority of a protocol-relative request path', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = new EventEmitter() as Server;
+        const ends: string[] = [];
+
+        const duplex = {
+            end: (chunk: unknown) => {
+                ends.push(String(chunk));
+            }
+        } as unknown as Duplex;
+
+        // `//evil.com/foo` must NOT be resolved to `/foo` and reach the
+        // handler; the WHATWG URL parser would treat `evil.com` as a host.
+        new SocketServer({}, fake)
+            .use('/foo', () => {})
+            .bootstrap(server);
+
+        server.emit(
+            'upgrade',
+            { url: '//evil.com/foo' } as IncomingMessage,
+            duplex,
+            Buffer.alloc(0)
+        );
+
+        t.assert.strictEqual(fake.upgrades.length, 0);
+        t.assert.deepStrictEqual(ends, [
+            'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
+        ]);
     });
 
     it('Extract a wildcard param as an array of segments', async (t: it.TestContext) => {

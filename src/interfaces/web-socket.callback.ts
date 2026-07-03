@@ -9,7 +9,9 @@ import type { ParamData } from 'path-to-regexp';
  * @typeParam T - Shape of the route parameters extracted from the path,
  * typically produced by {@link RouteParameters}.
  * @param ws - The upgraded WebSocket connection, enriched with the matched
- * `path` and `params`.
+ * `path` and `params` for this handler's route. As with Express's
+ * `req.params`, this is a shared mutable reference reassigned per handler; see
+ * {@link WebSocketObject}.
  * @param req - The original HTTP upgrade request.
  * @param next - Call to pass control to the next matching handler in the
  * chain instead of claiming the connection.

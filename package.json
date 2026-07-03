@@ -4,7 +4,7 @@
   "description": "Router-based WebSocket layer for ws, with path-to-regexp route matching and TypeScript support.",
   "type": "module",
   "license": "MIT",
-  "author": "BleedBeliever",
+  "author": "sleep-written",
   "homepage": "https://github.com/bleed-believer/ws#readme",
   "repository": {
     "type": "git",

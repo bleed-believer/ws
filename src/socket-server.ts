@@ -70,7 +70,16 @@ export class SocketServer extends SocketServerRouter {
         });
 
         const fnc = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-            const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+            // Extract the path exactly as Express 5's `parseurl` does: strip
+            // the query string and nothing else. The WHATWG `URL` parser is
+            // deliberately avoided here because it normalizes dot-segments
+            // (`/a/../b` → `/b`) and resolves protocol-relative/absolute
+            // request-targets (`//host/bar` → `/bar`), which would let a
+            // request reach a route it does not literally match and diverge
+            // from Express's route parsing.
+            const raw = req.url ?? '/';
+            const query = raw.indexOf('?');
+            const path = query === -1 ? raw : raw.slice(0, query);
             const queue: {
                 result: MatchResult<ParamData>;
                 callback: WebSocketCallback<ParamData>;
@@ -84,8 +93,7 @@ export class SocketServer extends SocketServerRouter {
             }
 
             if (queue.length === 0) {
-                socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-                socket.destroy();
+                socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
                 return;
             }
 

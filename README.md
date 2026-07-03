@@ -202,6 +202,26 @@ with two extra fields:
 - `ws.params` — the typed parameters matched from the route.
 - `ws.path` — the pathname that was matched (e.g. `/user/555/edit`).
 
+Just like Express's `req.params`, these are a **single mutable reference** that
+the router reassigns to the currently executing handler's matched values before
+invoking it. While your handler runs, `ws.params` / `ws.path` always describe
+its own route; the moment it calls `next()` and control moves on, the same
+reference is updated for the next handler. This only matters when you read them
+**after** yielding control — inside an `await`, a `setTimeout` or an event
+listener. Capture what you need synchronously at the top of the handler:
+
+```ts
+new SocketServer()
+    .use('/chat/:room', (ws) => {
+        const { room } = ws.params; // capture up front
+        ws.on('message', (data) => {
+            // `room` stays correct here; reading `ws.params.room` inside this
+            // listener would reflect whichever handler last ran, as in Express.
+            broadcast(room, data);
+        });
+    });
+```
+
 ### Pathless handlers
 
 A handler (or sub-router) registered without a `path` argument matches every
@@ -218,6 +238,39 @@ new SocketServer()
 This is useful for cross-cutting concerns (logging, auth checks) that should
 run for every connection ahead of more specific routes — combine it with
 `next()` so it doesn't swallow the connection.
+
+## Security: verifying the connection origin
+
+Like `ws` (and browsers' WebSocket API), this server does **not** validate the
+`Origin` header by default. Because browsers do not enforce the same-origin
+policy on WebSocket handshakes, any web page a user visits can open a connection
+to your server and ride along with the user's cookies — a
+[Cross-Site WebSocket Hijacking](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_WebSocket_Hijacking_Cheat_Sheet.html)
+(CSWSH) attack. If your handlers rely on ambient/cookie authentication, you
+should reject unexpected origins.
+
+Pass a `verifyClient` hook through the constructor options — it is forwarded
+straight to the underlying `ws` `WebSocketServer` and is honored during the
+handshake, so the upgrade is rejected before any handler runs:
+
+```ts
+const ALLOWED = new Set([ 'https://app.example.com' ]);
+
+const wsServer = new SocketServer({
+    verifyClient: ({ origin, req }) => {
+        // Reject browsers coming from an unexpected origin. Note that
+        // non-browser clients can spoof or omit `Origin`, so treat this as
+        // defense against CSWSH, not as authentication on its own.
+        return !origin || ALLOWED.has(origin);
+    }
+})
+    .use('/chat/:room', (ws) => { /* ... */ });
+```
+
+When `verifyClient` returns `false`, the client receives an HTTP `401` and the
+handshake is aborted. For real authentication, still validate a token/session
+inside your handler (or a pathless handler ahead of the route) rather than
+trusting `Origin` alone.
 
 ## API reference
 
