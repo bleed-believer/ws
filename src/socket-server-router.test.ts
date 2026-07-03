@@ -1,6 +1,11 @@
 import { SocketServerRouter } from './socket-server-router.js';
 import { describe, it } from 'node:test';
 
+/**
+ * Unit tests for {@link SocketServerRouter}, covering route registration
+ * and the flattening logic performed by `routes()` for both simple and
+ * nested (sub-router) registrations.
+ */
 describe('SocketServerRouter', () => {
     it('Resolve simple router', (t: it.TestContext) => {
         const routes = new SocketServerRouter()

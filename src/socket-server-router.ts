@@ -1,15 +1,39 @@
 import type { RouteParameters, WebSocketCallback } from './interfaces/index.js';
 import type { ParamData } from 'path-to-regexp';
 
+/**
+ * Composable route registry for WebSocket connections.
+ *
+ * Handlers and sub-routers are registered with {@link use} and later
+ * flattened into a single ordered list of `{ path, callback }` entries via
+ * {@link routes}, which {@link SocketServer} consults to match incoming
+ * upgrade requests. Routers can be nested to build path prefixes.
+ */
 export class SocketServerRouter {
     #routes: {
         path?: string;
         target: WebSocketCallback<ParamData> | SocketServerRouter;
     }[] = [];
 
+    /**
+     * Mounts a sub-router that applies to every path (no prefix).
+     */
     use(router: SocketServerRouter): SocketServerRouter;
+    /**
+     * Registers a handler that applies to every path (no filtering).
+     */
     use(callback: WebSocketCallback<ParamData>): SocketServerRouter;
+    /**
+     * Mounts a sub-router under the given path prefix.
+     */
     use(path: string, router: SocketServerRouter): SocketServerRouter;
+    /**
+     * Registers a handler for connections matching the given route
+     * pattern.
+     *
+     * @typeParam P - Route pattern string.
+     * @typeParam T - Parameters inferred from `P` via {@link RouteParameters}.
+     */
     use<P extends string, T extends RouteParameters<P>>(path: P, callback: WebSocketCallback<T>): SocketServerRouter;
     use(
         ...args:
@@ -28,6 +52,12 @@ export class SocketServerRouter {
         return this;
     }
 
+    /**
+     * Flattens this router's registrations, recursively expanding nested
+     * sub-routers, into a single ordered list of routes. Path prefixes are
+     * concatenated as sub-routers are unwrapped; pathless entries stay
+     * `undefined` (matching any path) unless nested under a prefixed one.
+     */
     routes(): {
         path?: string;
         callback: WebSocketCallback<ParamData>;

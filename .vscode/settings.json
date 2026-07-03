@@ -1,0 +1,5 @@
+{
+    "[typescript]": {
+        "js/ts.preferences.importModuleSpecifierEnding": "js"
+    }
+}

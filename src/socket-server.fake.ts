@@ -1,14 +1,22 @@
 import type { IncomingMessage } from 'node:http';
-import type { SocketInject } from './interfaces/index.js';
+import type { SocketServerInject } from './interfaces/index.js';
 import type { ParamData } from 'path-to-regexp';
 import type { WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
 
+/**
+ * Record of a single `close()` call made on a {@link SocketFakeWebSocket}.
+ */
 export interface SocketFakeCloseCall {
     reason?: string;
     code?: number;
 }
 
+/**
+ * Lightweight stand-in for a `ws` `WebSocket` instance, used by
+ * {@link SocketServerFake} so tests can inspect route params, the matched
+ * path and every `close()` call without opening a real socket.
+ */
 export interface SocketFakeWebSocket {
     closeCalls: SocketFakeCloseCall[];
     params?: ParamData;
@@ -17,19 +25,33 @@ export interface SocketFakeWebSocket {
     close(code?: number, reason?: string): void;
 }
 
+/**
+ * Snapshot of a single upgrade handled by {@link SocketServerFake}, exposing
+ * the original request, the fake WebSocket it produced, and a promise that
+ * resolves once the registered handler chain has finished running.
+ */
 export interface SocketFakeUpgrade {
     request: IncomingMessage;
     done: Promise<unknown>;
     ws: SocketFakeWebSocket;
 }
 
-export class SocketServerFake implements SocketInject {
+/**
+ * Test double for {@link SocketServerInject}.
+ *
+ * Replaces the real `ws` `WebSocketServer` with an in-memory implementation
+ * that records every handled upgrade instead of performing a real WebSocket
+ * handshake, allowing {@link SocketServer} to be exercised in unit tests
+ * without a network connection.
+ */
+export class SocketServerFake implements SocketServerInject {
     #upgrades: SocketFakeUpgrade[] = [];
+    /** Every upgrade handled so far, in the order they were received. */
     get upgrades(): SocketFakeUpgrade[] {
         return this.#upgrades;
     }
 
-    readonly WebSocketServer: SocketInject['WebSocketServer'];
+    readonly WebSocketServer: SocketServerInject['WebSocketServer'];
 
     constructor() {
         const upgrades = this.#upgrades;

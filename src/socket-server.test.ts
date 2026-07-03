@@ -8,6 +8,12 @@ import { describe, it } from 'node:test';
 import { SocketServerFake } from './socket-server.fake.js';
 import { SocketServer } from './socket-server.js';
 
+/**
+ * Unit tests for {@link SocketServer}'s `bootstrap` behavior, using
+ * {@link SocketServerFake} to simulate upgrades without opening real
+ * network sockets: route matching, param extraction, the `next()` chain,
+ * error handling, 404 rejection and upgrade-listener cleanup.
+ */
 describe('SocketServer', () => {
     it('Attend a connection with a static path', async (t: it.TestContext) => {
         const fake = new SocketServerFake();

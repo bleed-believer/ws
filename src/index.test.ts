@@ -8,6 +8,15 @@ import WebSocket from 'ws';
 import { SocketServerRouter } from './socket-server-router.js';
 import { SocketServer } from './socket-server.js';
 
+/**
+ * Boots `socket` on a random local port using a real HTTP server, and
+ * registers a cleanup hook on `t` that closes the server once the test
+ * finishes.
+ *
+ * @param socket - The server to bootstrap.
+ * @param t - Test context used to schedule the teardown.
+ * @returns The base `ws://` URL the server is listening on.
+ */
 async function launch(socket: SocketServer, t: it.TestContext): Promise<string> {
     const server = createServer();
     socket.bootstrap(server);

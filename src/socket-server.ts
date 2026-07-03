@@ -1,4 +1,4 @@
-import type { RouteParameters, Server, SocketInject, WebSocketCallback, WebSocketObject, SocketServerOptions } from './interfaces/index.js';
+import type { RouteParameters, Server, SocketServerInject, WebSocketCallback, WebSocketObject, SocketServerOptions } from './interfaces/index.js';
 import type { ParamData, MatchFunction, MatchResult } from 'path-to-regexp';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -7,11 +7,23 @@ import { WebSocketServer } from 'ws';
 import { SocketServerRouter } from './socket-server-router.js';
 import { match } from 'path-to-regexp';
 
+/**
+ * Router-based WebSocket server that attaches to an existing HTTP(S)
+ * server and dispatches upgrade requests to the handlers registered
+ * through {@link SocketServerRouter.use}, matching each connection's URL
+ * against `path-to-regexp` route patterns.
+ */
 export class SocketServer extends SocketServerRouter {
-    #injected: Required<SocketInject>;
+    #injected: Required<SocketServerInject>;
     #options?: SocketServerOptions;
 
-    constructor(options?: SocketServerOptions, inject?: SocketInject) {
+    /**
+     * @param options - Options forwarded to the underlying `ws`
+     * `WebSocketServer` (see {@link SocketServerOptions}).
+     * @param inject - Optional dependency overrides, primarily used to
+     * substitute the real WebSocket server implementation in tests.
+     */
+    constructor(options?: SocketServerOptions, inject?: SocketServerInject) {
         super();
         this.#options = options;
         this.#injected = {
@@ -28,6 +40,21 @@ export class SocketServer extends SocketServerRouter {
         return this;
     }
 
+    /**
+     * Attaches this server to the given HTTP(S) server's `upgrade` event.
+     *
+     * For each upgrade request, resolves the registered routes matching
+     * the request's URL, completes the WebSocket handshake, and invokes
+     * the matching handlers in registration order until one of them
+     * claims the connection (i.e. does not call `next()`). If no handler
+     * claims the connection, it is closed with code `1011`; if no route
+     * matches at all, the raw socket is rejected with an HTTP 404 response
+     * before the handshake occurs. The listener is automatically detached
+     * when the server emits `close`.
+     *
+     * @param server - The HTTP(S) server to bootstrap the WebSocket
+     * upgrade handling onto.
+     */
     bootstrap(server: Server): void {
         const routes = this
             .routes()
