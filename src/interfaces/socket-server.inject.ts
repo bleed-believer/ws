@@ -34,4 +34,21 @@ export interface SocketServerInject {
             ) => unknown
         ): void;
     };
+
+    /**
+     * Sink used to report handler failures, mirroring the subset of the
+     * global `console` that {@link SocketServer} relies on. When omitted,
+     * the server falls back to the global `console`. Inject a custom
+     * implementation to redirect error logging (e.g. to a structured
+     * logger) or to capture it in tests instead of writing to stderr.
+     */
+    console?: {
+        /**
+         * Logs the error thrown (or the promise rejection produced) by a
+         * connection handler before the socket is closed with code `1011`.
+         *
+         * @param args - The error and any additional context to report.
+         */
+        error(...args: unknown[]): void;
+    };
 }

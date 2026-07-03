@@ -53,7 +53,27 @@ export class SocketServerFake implements SocketServerInject {
 
     readonly WebSocketServer: SocketServerInject['WebSocketServer'];
 
+    #errors: unknown[] = [];
+    /** Every argument passed to {@link console.error}, in call order. */
+    get errors(): unknown[] {
+        return this.#errors;
+    }
+
+    /**
+     * Captures {@link SocketServer}'s error logging in memory instead of
+     * writing to stderr, so tests can assert on it without mutating the
+     * global `console`.
+     */
+    readonly console: SocketServerInject['console'];
+
     constructor() {
+        const errors = this.#errors;
+        this.console = {
+            error(...args: unknown[]): void {
+                errors.push(...args);
+            }
+        };
+
         const upgrades = this.#upgrades;
         this.WebSocketServer = class {
             constructor(_options: { noServer: true }) {}

@@ -27,7 +27,8 @@ export class SocketServer extends SocketServerRouter {
         super();
         this.#options = options;
         this.#injected = {
-            WebSocketServer: inject?.WebSocketServer?.bind(inject)  ?? WebSocketServer
+            WebSocketServer:    inject?.WebSocketServer?.bind(inject)   ?? WebSocketServer,
+            console:            inject?.console                         ?? globalThis.console
         };
     }
 
@@ -102,7 +103,7 @@ export class SocketServer extends SocketServerRouter {
                     try {
                         await callback(wsObj, req, nextFn);
                     } catch (err) {
-                        console.error(err);
+                        this.#injected.console.error(err);
                         ws.close(1011, 'Handler threw an exception');
                         return;
                     }

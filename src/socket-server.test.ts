@@ -164,15 +164,14 @@ describe('SocketServer', () => {
     });
 
     it('Close the connection when a handler throws', async (t: it.TestContext) => {
-        t.mock.method(console, 'error', () => {});
-
         const fake = new SocketServerFake();
         const server = new EventEmitter() as Server;
         const calls: string[] = [];
+        const error = new Error('handler exploded');
 
         new SocketServer({}, fake)
             .use('/foo', () => {
-                throw new Error('handler exploded');
+                throw error;
             })
             .use('/foo', () => { calls.push('fn-02'); })
             .bootstrap(server);
@@ -188,6 +187,7 @@ describe('SocketServer', () => {
         await upgrade.done;
 
         t.assert.deepStrictEqual(calls, []);
+        t.assert.deepStrictEqual(fake.errors, [ error ]);
         t.assert.deepStrictEqual(upgrade.ws.closeCalls, [
             { code: 1011, reason: 'Handler threw an exception' }
         ]);
