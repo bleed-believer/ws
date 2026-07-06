@@ -77,7 +77,7 @@ new SocketServer(options?)
   `maxPayload` or `perMessageDeflate`.
 
 ```ts
-wsServer.bootstrap(server: Server): void
+wsServer.bootstrap(server: Server): WebSocketServer
 ```
 
 Attaches an `upgrade` listener to `server` (any `EventEmitter` exposing
@@ -100,6 +100,9 @@ request:
 
 The `upgrade` listener is automatically removed when the underlying server
 emits `close`.
+
+`bootstrap()` returns the `ws` `WebSocketServer` instance it creates, so you can
+interact with it directly (e.g. listen to its events or close it).
 
 ### `SocketServerRouter`
 
@@ -276,7 +279,7 @@ trusting `Origin` alone.
 
 | Export | Description |
 | --- | --- |
-| `SocketServer` | Router-based server; `bootstrap(server)` attaches it to an HTTP(S) server. |
+| `SocketServer` | Router-based server; `bootstrap(server)` attaches it to an HTTP(S) server and returns the created `WebSocketServer`. |
 | `SocketServerRouter` | Composable route registry (`use`, `routes`); base class of `SocketServer`. |
 | `RouteParameters<P>` | Type helper inferring the params object for a route pattern `P`. |
 | `Server` | Minimal `EventEmitter` shape (`upgrade`, `close`) required by `bootstrap`. |
