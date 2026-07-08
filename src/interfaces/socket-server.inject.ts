@@ -1,6 +1,4 @@
-import type { IncomingMessage } from 'node:http';
-import type { WebSocket } from 'ws';
-import type { Duplex } from 'node:stream';
+import type { WebSocketServerObject } from './web-socket-server.object.js';
 
 /**
  * Dependency-injection interface for {@link SocketServer}.
@@ -10,30 +8,17 @@ import type { Duplex } from 'node:stream';
  */
 export interface SocketServerInject {
     /**
-     * Constructor for a `noServer`-mode WebSocket server, i.e. one that
-     * only exposes `handleUpgrade` and does not listen on its own port.
+     * Constructor for a `noServer`-mode WebSocket server: one that does not
+     * listen on its own port, exposing `handleUpgrade` to complete handshakes
+     * and `clients` to enumerate live connections (see
+     * {@link WebSocketServerObject}).
      */
-    WebSocketServer: new(o: { noServer: true }) => {
-        /**
-         * Completes the WebSocket handshake for a raw HTTP upgrade request
-         * and hands the resulting socket to `callback`.
-         *
-         * @param request - The incoming HTTP upgrade request.
-         * @param socket - The underlying TCP/TLS socket.
-         * @param head - The first packet of the upgraded stream.
-         * @param callback - Invoked with the established WebSocket once the
-         * handshake completes.
-         */
-        handleUpgrade(
-            request: IncomingMessage,
-            socket: Duplex,
-            head: Buffer,
-            callback: (
-                ws: WebSocket,
-                request: IncomingMessage
-            ) => unknown
-        ): void;
-    };
+    WebSocketServer: new(
+        o: {
+            noServer: true;
+            server?: undefined;
+        }
+    ) => WebSocketServerObject;
 
     /**
      * Sink used to report handler failures, mirroring the subset of the

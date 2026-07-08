@@ -1,8 +1,11 @@
+import type { WebSocketServerEventMap } from './interfaces/index.js';
 import type { IncomingMessage } from 'node:http';
 import type { SocketServerInject } from './interfaces/index.js';
 import type { ParamData } from 'path-to-regexp';
 import type { WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
+
+import { EventEmitter } from 'node:events';
 
 /**
  * Record of a single `close()` call made on a {@link SocketFakeWebSocket}.
@@ -75,8 +78,13 @@ export class SocketServerFake implements SocketServerInject {
         };
 
         const upgrades = this.#upgrades;
-        this.WebSocketServer = class {
-            constructor(_options: { noServer: true }) {}
+        this.WebSocketServer = class extends EventEmitter<WebSocketServerEventMap> {
+            /** Every fake socket produced by {@link handleUpgrade}. */
+            clients = new Set<SocketFakeWebSocket>();
+
+            constructor(_options: { noServer: true }) {
+                super();
+            }
 
             handleUpgrade(
                 request: IncomingMessage,
@@ -91,6 +99,8 @@ export class SocketServerFake implements SocketServerInject {
                         closeCalls.push({ code, reason });
                     }
                 };
+
+                this.clients.add(ws);
 
                 const done = Promise.resolve(
                     callback(ws as unknown as WebSocket, request)

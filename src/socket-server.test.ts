@@ -5,24 +5,43 @@ import type { Duplex } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 
+import { SocketServerRouter } from './socket-server-router.js';
 import { SocketServerFake } from './socket-server.fake.js';
 import { SocketServer } from './socket-server.js';
 
 /**
- * Unit tests for {@link SocketServer}'s `bootstrap` behavior, using
- * {@link SocketServerFake} to simulate upgrades without opening real
- * network sockets: route matching, param extraction, the `next()` chain,
- * error handling, 404 rejection and upgrade-listener cleanup.
+ * Builds a minimal {@link Server} stand-in around an `EventEmitter`, adding
+ * the `listening`/`close()` surface the new {@link SocketServer} relies on.
+ * `close()` calls are counted so lifecycle tests can assert on them.
+ */
+function fakeServer(listening = true): Server & { closeCount: number } {
+    const server = new EventEmitter() as Server & { closeCount: number };
+    server.closeCount = 0;
+    Object.defineProperty(server, 'listening', { get: () => listening });
+    (server as Server).close = () => {
+        server.closeCount++;
+        return server;
+    };
+    return server;
+}
+
+/**
+ * Unit tests for {@link SocketServer}, using {@link SocketServerFake} to
+ * simulate upgrades without opening real network sockets: route matching,
+ * param extraction, the `next()` chain, error handling, 404 rejection and
+ * `close()` teardown. The server is attached at construction time and routes
+ * are registered through a {@link SocketServerRouter}.
  */
 describe('SocketServer', () => {
     it('Attend a connection with a static path', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const calls: string[] = [];
 
-        new SocketServer({}, fake)
-            .use('/foo', () => { calls.push('foo'); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => { calls.push('foo'); })
+            );
 
         server.emit(
             'upgrade',
@@ -43,11 +62,12 @@ describe('SocketServer', () => {
 
     it('Extract the params from the path', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/user/:id/:action', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/user/:id/:action', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -66,12 +86,13 @@ describe('SocketServer', () => {
 
     it('Attend any path when the route is pathless', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const calls: string[] = [];
 
-        new SocketServer({}, fake)
-            .use(() => { calls.push('any'); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use(() => { calls.push('any'); })
+            );
 
         server.emit(
             'upgrade',
@@ -90,16 +111,17 @@ describe('SocketServer', () => {
 
     it('Pass the control to the next handler with next()', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const calls: string[] = [];
 
-        new SocketServer({}, fake)
-            .use('/foo', (_ws, _req, next) => {
-                calls.push('fn-01');
-                next();
-            })
-            .use('/foo', () => { calls.push('fn-02'); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', (_ws, _req, next) => {
+                    calls.push('fn-01');
+                    next();
+                })
+                .use('/foo', () => { calls.push('fn-02'); })
+            );
 
         server.emit(
             'upgrade',
@@ -117,16 +139,17 @@ describe('SocketServer', () => {
 
     it('Exposes each handler the params of its own route while it runs (Express req.params parity)', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const seen: Record<string, unknown>[] = [];
 
         // Mirrors Express: `ws.params` is a single mutable reference that is
         // reassigned to the currently executing handler's matched params.
-        new SocketServer({}, fake)
-            .use((ws, _req, next) => { seen.push({ ...ws.params }); next(); })
-            .use('/user/:id', (ws, _req, next) => { seen.push({ ...ws.params }); next(); })
-            .use('/user/:id', ws => { seen.push({ ...ws.params }); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use((ws, _req, next) => { seen.push({ ...ws.params }); next(); })
+                .use('/user/:id', (ws, _req, next) => { seen.push({ ...ws.params }); next(); })
+                .use('/user/:id', ws => { seen.push({ ...ws.params }); })
+            );
 
         server.emit(
             'upgrade',
@@ -145,13 +168,14 @@ describe('SocketServer', () => {
 
     it('Stop the chain when a handler does not call next()', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const calls: string[] = [];
 
-        new SocketServer({}, fake)
-            .use('/foo', () => { calls.push('fn-01'); })
-            .use('/foo', () => { calls.push('fn-02'); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => { calls.push('fn-01'); })
+                .use('/foo', () => { calls.push('fn-02'); })
+            );
 
         server.emit(
             'upgrade',
@@ -169,12 +193,13 @@ describe('SocketServer', () => {
 
     it('Close the connection when no handler claims it', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/foo', (_ws, _req, next) => next())
-            .use('/foo', (_ws, _req, next) => next())
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', (_ws, _req, next) => next())
+                .use('/foo', (_ws, _req, next) => next())
+            );
 
         server.emit(
             'upgrade',
@@ -193,16 +218,17 @@ describe('SocketServer', () => {
 
     it('Close the connection when a handler throws', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const calls: string[] = [];
         const error = new Error('handler exploded');
 
-        new SocketServer({}, fake)
-            .use('/foo', () => {
-                throw error;
-            })
-            .use('/foo', () => { calls.push('fn-02'); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => {
+                    throw error;
+                })
+                .use('/foo', () => { calls.push('fn-02'); })
+            );
 
         server.emit(
             'upgrade',
@@ -223,7 +249,7 @@ describe('SocketServer', () => {
 
     it('Reject with 404 when no route matches', (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const ends: string[] = [];
 
         const duplex = {
@@ -232,9 +258,10 @@ describe('SocketServer', () => {
             }
         } as unknown as Duplex;
 
-        new SocketServer({}, fake)
-            .use('/foo', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -251,7 +278,7 @@ describe('SocketServer', () => {
 
     it('Does not normalize dot-segments in the request path (Express parity)', (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const ends: string[] = [];
 
         const duplex = {
@@ -262,9 +289,10 @@ describe('SocketServer', () => {
 
         // `/admin/../public` must NOT collapse to `/public` and reach the
         // handler; Express's `parseurl` keeps `..` as a literal segment.
-        new SocketServer({}, fake)
-            .use('/public', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/public', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -281,7 +309,7 @@ describe('SocketServer', () => {
 
     it('Does not strip the authority of a protocol-relative request path', (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const ends: string[] = [];
 
         const duplex = {
@@ -292,9 +320,10 @@ describe('SocketServer', () => {
 
         // `//evil.com/foo` must NOT be resolved to `/foo` and reach the
         // handler; the WHATWG URL parser would treat `evil.com` as a host.
-        new SocketServer({}, fake)
-            .use('/foo', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -311,11 +340,12 @@ describe('SocketServer', () => {
 
     it('Extract a wildcard param as an array of segments', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/files/*rest', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/files/*rest', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -333,11 +363,12 @@ describe('SocketServer', () => {
 
     it('Extract multiple params within a single segment', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/file/:name.:ext', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/file/:name.:ext', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -354,11 +385,12 @@ describe('SocketServer', () => {
 
     it('Match an optional group ({/:id}) when the segment is present', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/user{/:id}', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/user{/:id}', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -376,11 +408,12 @@ describe('SocketServer', () => {
 
     it('Match an optional group ({/:id}) when the segment is absent', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/user{/:id}', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/user{/:id}', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -399,12 +432,13 @@ describe('SocketServer', () => {
 
     it('Match several optional groups ({/:id}{/:action}) independently', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
         const results: Record<string, unknown>[] = [];
 
-        new SocketServer({}, fake)
-            .use('/user{/:id}{/:action}', ws => { results.push({ ...ws.params }); })
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/user{/:id}{/:action}', ws => { results.push({ ...ws.params }); })
+            );
 
         for (const url of [ '/user', '/user/5', '/user/5/edit' ]) {
             server.emit(
@@ -426,11 +460,12 @@ describe('SocketServer', () => {
 
     it('Tolerate a trailing slash on the request path (Express parity)', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
-        new SocketServer({}, fake)
-            .use('/user/:id', () => {})
-            .bootstrap(server);
+        new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/user/:id', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -446,30 +481,29 @@ describe('SocketServer', () => {
         t.assert.deepStrictEqual({ ...upgrade.ws.params }, { id: '123' });
     });
 
-    it('Reject the removed :id? syntax at bootstrap, matching Express', (t: it.TestContext) => {
+    it('Reject the removed :id? syntax when the route is registered, matching Express', (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer();
 
         // Express 5 / path-to-regexp v8 dropped the `?` modifier; the
-        // optional group `{/:id}` must be used instead.
+        // optional group `{/:id}` must be used instead. The route matcher is
+        // built while `use()` registers the router, so the throw surfaces there.
         t.assert.throws(() => {
-            new SocketServer({}, fake)
-                .use('/user/:id?' as string, () => {})
-                .bootstrap(server);
+            new SocketServer({ server }, fake)
+                .use(new SocketServerRouter()
+                    .use('/user/:id?' as string, () => {})
+                );
         });
     });
 
-    it('Detach the upgrade listener when the server closes', (t: it.TestContext) => {
+    it('Close every connected client and stop the server on close()', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = new EventEmitter() as Server;
+        const server = fakeServer(true);
 
-        new SocketServer({}, fake)
-            .use('/foo', () => {})
-            .bootstrap(server);
-
-        t.assert.strictEqual(server.listenerCount('upgrade'), 1);
-        server.emit('close');
-        t.assert.strictEqual(server.listenerCount('upgrade'), 0);
+        const app = new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
 
         server.emit(
             'upgrade',
@@ -478,6 +512,31 @@ describe('SocketServer', () => {
             Buffer.alloc(0)
         );
 
-        t.assert.strictEqual(fake.upgrades.length, 0);
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        // The handler claimed the connection, so it is still open until close().
+        t.assert.deepStrictEqual(upgrade.ws.closeCalls, []);
+
+        app.close();
+
+        t.assert.deepStrictEqual(upgrade.ws.closeCalls, [
+            { code: undefined, reason: undefined }
+        ]);
+        t.assert.strictEqual(server.closeCount, 1);
+    });
+
+    it('Leave an already-stopped server untouched on close()', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer(false);
+
+        const app = new SocketServer({ server }, fake)
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
+
+        app.close();
+
+        t.assert.strictEqual(server.closeCount, 0);
     });
 });

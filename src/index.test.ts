@@ -9,24 +9,31 @@ import { SocketServerRouter } from './socket-server-router.js';
 import { SocketServer } from './socket-server.js';
 
 /**
- * Boots `socket` on a random local port using a real HTTP server, and
- * registers a cleanup hook on `t` that closes the server once the test
- * finishes.
+ * Spins up a real HTTP server on a random local port, attaches a
+ * {@link SocketServer} to it, and registers the routes declared by
+ * `configure` through a {@link SocketServerRouter}. A cleanup hook closes the
+ * server once the test finishes.
  *
- * @param socket - The server to bootstrap.
+ * @param configure - Registers the routes under test on the given router.
  * @param t - Test context used to schedule the teardown.
  * @returns The base `ws://` URL the server is listening on.
  */
-async function launch(socket: SocketServer, t: it.TestContext): Promise<string> {
+async function launch(
+    configure: (router: SocketServerRouter) => void,
+    t: it.TestContext
+): Promise<string> {
     const server = createServer();
-    socket.bootstrap(server);
+    const router = new SocketServerRouter();
+    configure(router);
+
+    new SocketServer({ server }).use(router);
 
     server.listen(0);
     await once(server, 'listening');
 
-    t.after(() => new Promise(resolve => {
+    t.after(() => new Promise<void>(resolve => {
         server.closeAllConnections();
-        server.close(resolve);
+        server.close(() => resolve());
     }));
 
     const { port } = server.address() as AddressInfo;
@@ -35,14 +42,13 @@ async function launch(socket: SocketServer, t: it.TestContext): Promise<string> 
 
 describe('SocketServer (e2e)', () => {
     it('Accepts a connection on a registered route and echoes messages', async (t: it.TestContext) => {
-        const app = new SocketServer()
+        const url = await launch(router => router
             .use('echo', ws => {
                 ws.addEventListener('message', e => {
                     ws.send(`echo: ${e.data}`);
                 });
-            });
+            }), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/echo`);
         await once(client, 'open');
 
@@ -55,15 +61,14 @@ describe('SocketServer (e2e)', () => {
     });
 
     it('Exposes the route params and matched path to the handler', async (t: it.TestContext) => {
-        const app = new SocketServer()
+        const url = await launch(router => router
             .use('user/:id/posts/:postId', ws => {
                 ws.send(JSON.stringify({
                     params: ws.params,
                     path: ws.path
                 }));
-            });
+            }), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/user/42/posts/7`);
         const message = once(client, 'message');
 
@@ -78,14 +83,13 @@ describe('SocketServer (e2e)', () => {
     });
 
     it('Routes connections through nested routers', async (t: it.TestContext) => {
-        const app = new SocketServer()
+        const url = await launch(router => router
             .use('api', new SocketServerRouter()
                 .use('chat/:room', ws => {
                     ws.send(ws.path);
                 })
-            );
+            ), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/api/chat/lobby`);
         const message = once(client, 'message');
 
@@ -97,10 +101,9 @@ describe('SocketServer (e2e)', () => {
     });
 
     it('Rejects unmatched paths with a 404 response', async (t: it.TestContext) => {
-        const app = new SocketServer()
-            .use('known', () => {});
+        const url = await launch(router => router
+            .use('known', () => {}), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/unknown`);
 
         const [ , res ] = await once(client, 'unexpected-response');
@@ -109,7 +112,7 @@ describe('SocketServer (e2e)', () => {
 
     it('Passes control to the next matching handler with next()', async (t: it.TestContext) => {
         const trace: string[] = [];
-        const app = new SocketServer()
+        const url = await launch(router => router
             .use((_ws, _req, next) => {
                 trace.push('global');
                 next();
@@ -120,9 +123,8 @@ describe('SocketServer (e2e)', () => {
             })
             .use('room', () => {
                 trace.push('unreachable');
-            });
+            }), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/room`);
         const message = once(client, 'message');
 
@@ -135,10 +137,9 @@ describe('SocketServer (e2e)', () => {
     });
 
     it('Closes with 1011 when no handler claims the connection', async (t: it.TestContext) => {
-        const app = new SocketServer()
-            .use('open', (_ws, _req, next) => next());
+        const url = await launch(router => router
+            .use('open', (_ws, _req, next) => next()), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/open`);
 
         const [ code, reason ] = await once(client, 'close');
@@ -148,12 +149,11 @@ describe('SocketServer (e2e)', () => {
 
     it('Closes with 1011 when a handler throws an exception', async (t: it.TestContext) => {
         const error = t.mock.method(console, 'error', () => {});
-        const app = new SocketServer()
+        const url = await launch(router => router
             .use('boom', async () => {
                 throw new Error('kaboom');
-            });
+            }), t);
 
-        const url = await launch(app, t);
         const client = new WebSocket(`${url}/boom`);
 
         const [ code, reason ] = await once(client, 'close');
@@ -162,18 +162,25 @@ describe('SocketServer (e2e)', () => {
         t.assert.strictEqual(error.mock.callCount(), 1);
     });
 
-    it('Detaches the upgrade listener when the server closes', async (t: it.TestContext) => {
+    it('Closes the underlying server and its connected clients on close()', async (t: it.TestContext) => {
         const server = createServer();
-        new SocketServer()
-            .use('any', () => {})
-            .bootstrap(server);
-
-        t.assert.strictEqual(server.listenerCount('upgrade'), 1);
+        const app = new SocketServer({ server })
+            .use(new SocketServerRouter().use('any', () => {}));
 
         server.listen(0);
         await once(server, 'listening');
-        await new Promise(resolve => server.close(resolve));
+        t.after(() => { if (server.listening) server.close(); });
 
-        t.assert.strictEqual(server.listenerCount('upgrade'), 0);
+        const { port } = server.address() as AddressInfo;
+        const client = new WebSocket(`ws://localhost:${port}/any`);
+        await once(client, 'open');
+
+        const clientClosed = once(client, 'close');
+        const serverClosed = once(server, 'close');
+        app.close();
+
+        await clientClosed;
+        await serverClosed;
+        t.assert.strictEqual(server.listening, false);
     });
 });
