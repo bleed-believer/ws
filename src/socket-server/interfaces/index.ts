@@ -1,10 +1,9 @@
 /**
- * Barrel file that re-exports every public type used by the WebSocket
- * router implementation.
+ * Barrel file that re-exports every type belonging to the
+ * {@link SocketServer} feature.
  */
 
 export type { Server } from './server.js';
-export type { RouteParameters } from './route-parameters.js';
 export type { SocketServerInject } from './socket-server.inject.js';
 export type { SocketServerOptions } from './socket-server.options.js';
 

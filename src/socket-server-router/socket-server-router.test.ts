@@ -1,5 +1,6 @@
-import { SocketServerRouter } from './socket-server-router.js';
 import { describe, it } from 'node:test';
+
+import { SocketServerRouter } from './socket-server-router.js';
 
 /**
  * Unit tests for {@link SocketServerRouter}, covering route registration

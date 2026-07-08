@@ -1,5 +1,7 @@
-import type { RouteParameters, WebSocketCallback } from './interfaces/index.js';
 import type { ParamData } from 'path-to-regexp';
+
+import type { WebSocketCallback } from '../socket-server/interfaces/index.js';
+import type { RouteParameters } from './interfaces/index.js';
 
 /**
  * Composable route registry for WebSocket connections.
@@ -14,43 +16,6 @@ export class SocketServerRouter {
         path?: string;
         target: WebSocketCallback<ParamData> | SocketServerRouter;
     }[] = [];
-
-    /**
-     * Mounts a sub-router that applies to every path (no prefix).
-     */
-    use(router: SocketServerRouter): SocketServerRouter;
-    /**
-     * Registers a handler that applies to every path (no filtering).
-     */
-    use(callback: WebSocketCallback<ParamData>): SocketServerRouter;
-    /**
-     * Mounts a sub-router under the given path prefix.
-     */
-    use(path: string, router: SocketServerRouter): SocketServerRouter;
-    /**
-     * Registers a handler for connections matching the given route
-     * pattern.
-     *
-     * @typeParam P - Route pattern string.
-     * @typeParam T - Parameters inferred from `P` via {@link RouteParameters}.
-     */
-    use<P extends string, T extends RouteParameters<P>>(path: P, callback: WebSocketCallback<T>): SocketServerRouter;
-    use(
-        ...args:
-            [ SocketServerRouter | WebSocketCallback<ParamData> ] |
-            [ string, SocketServerRouter | WebSocketCallback<ParamData> ]
-    ): SocketServerRouter {
-        const path = typeof args[0] === 'string'
-        ?   args[0].startsWith('/') ? args[0] : '/' + args[0]
-        :   undefined;
-
-        const target = typeof args[0] === 'string'
-        ?   args[1]!
-        :   args[0];
-
-        this.#routes.push({ path, target });
-        return this;
-    }
 
     /**
      * Flattens this router's registrations, recursively expanding nested
@@ -87,5 +52,42 @@ export class SocketServerRouter {
         }
 
         return out;
+    }
+
+    /**
+     * Mounts a sub-router that applies to every path (no prefix).
+     */
+    use(router: SocketServerRouter): SocketServerRouter;
+    /**
+     * Registers a handler that applies to every path (no filtering).
+     */
+    use(callback: WebSocketCallback<ParamData>): SocketServerRouter;
+    /**
+     * Mounts a sub-router under the given path prefix.
+     */
+    use(path: string, router: SocketServerRouter): SocketServerRouter;
+    /**
+     * Registers a handler for connections matching the given route
+     * pattern.
+     *
+     * @typeParam P - Route pattern string.
+     * @typeParam T - Parameters inferred from `P` via {@link RouteParameters}.
+     */
+    use<P extends string, T extends RouteParameters<P>>(path: P, callback: WebSocketCallback<T>): SocketServerRouter;
+    use(
+        ...args:
+            [ SocketServerRouter | WebSocketCallback<ParamData> ] |
+            [ string, SocketServerRouter | WebSocketCallback<ParamData> ]
+    ): SocketServerRouter {
+        const path = typeof args[0] === 'string'
+        ?   args[0].startsWith('/') ? args[0] : '/' + args[0]
+        :   undefined;
+
+        const target = typeof args[0] === 'string'
+        ?   args[1]!
+        :   args[0];
+
+        this.#routes.push({ path, target });
+        return this;
     }
 }

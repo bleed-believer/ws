@@ -1,11 +1,12 @@
 import type { IncomingMessage } from 'node:http';
-import type { Server } from './interfaces/index.js';
 import type { Duplex } from 'node:stream';
+
+import type { Server } from './interfaces/index.js';
 
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 
-import { SocketServerRouter } from './socket-server-router.js';
+import { SocketServerRouter } from '../socket-server-router/index.js';
 import { SocketServerFake } from './socket-server.fake.js';
 import { SocketServer } from './socket-server.js';
 

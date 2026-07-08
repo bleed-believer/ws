@@ -1,13 +1,14 @@
-import type { Server, SocketServerOptions, WebSocketCallback, WebSocketObject } from './interfaces/index.js';
-import type { SocketServerInject, WebSocketServerEventMap } from './interfaces/index.js';
 import type { MatchFunction, MatchResult, ParamData } from 'path-to-regexp';
-import type { SocketServerRouter } from './socket-server-router.js';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
-import { createRouteMatcher } from './route-matcher.js';
+import type { Server, SocketServerOptions, WebSocketCallback, WebSocketObject, SocketServerInject, WebSocketServerEventMap } from './interfaces/index.js';
+import type { SocketServerRouter } from '../socket-server-router/index.js';
+
 import { WebSocketServer } from 'ws';
 import EventEmitter from 'node:events';
+
+import { createRouteMatcher } from '../route-matcher/index.js';
 
 /**
  * Router-based WebSocket server that attaches to an existing HTTP(S)
@@ -59,7 +60,7 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
                 const wsObj = ws as unknown as WebSocketObject<ParamData>;
                 wsObj.params = result.params;
                 wsObj.path = result.path;
-                
+
                 let next = false;
                 const nextFn = () => { next = true };
 
@@ -119,24 +120,20 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
     }
 
     /**
-     * Registers a router's handlers on this server.
+     * Shuts the socket layer down: detaches the upgrade handler (undoing
+     * {@link bind}) and closes every live WebSocket connection.
      *
-     * Flattens `router` into its ordered `{ path, callback }` entries and
-     * compiles a route matcher for each, appending them to the routes
-     * consulted on every upgrade. Handlers keep their registration order, so
-     * routes mounted by later calls are matched after earlier ones.
+     * The underlying HTTP(S) server is deliberately left untouched — this
+     * class does not own it, so stopping or restarting it is the caller's
+     * responsibility. Nothing else is subscribed on the server, so this
+     * leaves no lingering listeners; call {@link bind} again to resume
+     * routing.
      *
-     * @param router - The router whose routes are mounted onto this server.
      * @returns This same instance, to allow chaining.
      */
-    use(router: SocketServerRouter): SocketServer {
-        router
-            .routes()
-            .forEach(x => this.#routes.push({
-                callback: x.callback,
-                matchFn: createRouteMatcher(x.path)
-            }));
-
+    close(): SocketServer {
+        this.#server.off('upgrade', this.#upgradeCallback);
+        for (const client of this.#wss.clients) client.close();
         return this;
     }
 
@@ -163,20 +160,24 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
     }
 
     /**
-     * Shuts the socket layer down: detaches the upgrade handler (undoing
-     * {@link bind}) and closes every live WebSocket connection.
+     * Registers a router's handlers on this server.
      *
-     * The underlying HTTP(S) server is deliberately left untouched — this
-     * class does not own it, so stopping or restarting it is the caller's
-     * responsibility. Nothing else is subscribed on the server, so this
-     * leaves no lingering listeners; call {@link bind} again to resume
-     * routing.
+     * Flattens `router` into its ordered `{ path, callback }` entries and
+     * compiles a route matcher for each, appending them to the routes
+     * consulted on every upgrade. Handlers keep their registration order, so
+     * routes mounted by later calls are matched after earlier ones.
      *
+     * @param router - The router whose routes are mounted onto this server.
      * @returns This same instance, to allow chaining.
      */
-    close(): SocketServer {
-        this.#server.off('upgrade', this.#upgradeCallback);
-        for (const client of this.#wss.clients) client.close();
+    use(router: SocketServerRouter): SocketServer {
+        router
+            .routes()
+            .forEach(x => this.#routes.push({
+                callback: x.callback,
+                matchFn: createRouteMatcher(x.path)
+            }));
+
         return this;
     }
 }

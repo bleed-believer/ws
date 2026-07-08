@@ -1,9 +1,9 @@
-import type { WebSocketServerEventMap } from './interfaces/index.js';
 import type { IncomingMessage } from 'node:http';
-import type { SocketServerInject } from './interfaces/index.js';
 import type { ParamData } from 'path-to-regexp';
 import type { WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
+
+import type { WebSocketServerEventMap, SocketServerInject } from './interfaces/index.js';
 
 import { EventEmitter } from 'node:events';
 
