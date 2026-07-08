@@ -5,9 +5,10 @@ import type { Duplex } from 'node:stream';
 /**
  * Minimal shape an HTTP(S) server must expose for a {@link SocketServer} to
  * attach to it: an `EventEmitter` that fires `upgrade` when a client requests
- * a protocol upgrade and `close` when the server shuts down, plus the
- * `listening` flag and `close()` method {@link SocketServer.close} uses to
- * tear the server down. Node's `http.Server`/`https.Server` satisfy it.
+ * a protocol upgrade. {@link SocketServer} only ever adds and removes an
+ * `upgrade` listener; starting, stopping or restarting the server is the
+ * caller's responsibility, so nothing else is required here. Node's
+ * `http.Server`/`https.Server` satisfy it.
  */
 export interface Server extends EventEmitter<{
     upgrade: [
@@ -15,12 +16,4 @@ export interface Server extends EventEmitter<{
         socket: Duplex,
         head: Buffer
     ];
-
-    close: [ ];
-}> {
-    /** Whether the server is currently accepting connections. */
-    get listening(): boolean;
-
-    /** Stops the server from accepting further connections. */
-    close(): Server;
-};
+}> {};

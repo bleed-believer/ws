@@ -10,27 +10,21 @@ import { SocketServerFake } from './socket-server.fake.js';
 import { SocketServer } from './socket-server.js';
 
 /**
- * Builds a minimal {@link Server} stand-in around an `EventEmitter`, adding
- * the `listening`/`close()` surface the new {@link SocketServer} relies on.
- * `close()` calls are counted so lifecycle tests can assert on them.
+ * Builds a minimal {@link Server} stand-in around an `EventEmitter`, enough
+ * for {@link SocketServer} to attach and detach its `upgrade` listener. The
+ * server's own lifecycle is not this class's concern, so nothing beyond the
+ * `upgrade` event is modelled.
  */
-function fakeServer(listening = true): Server & { closeCount: number } {
-    const server = new EventEmitter() as Server & { closeCount: number };
-    server.closeCount = 0;
-    Object.defineProperty(server, 'listening', { get: () => listening });
-    (server as Server).close = () => {
-        server.closeCount++;
-        return server;
-    };
-    return server;
+function fakeServer(): Server {
+    return new EventEmitter() as Server;
 }
 
 /**
  * Unit tests for {@link SocketServer}, using {@link SocketServerFake} to
  * simulate upgrades without opening real network sockets: route matching,
  * param extraction, the `next()` chain, error handling, 404 rejection and
- * `close()` teardown. The server is attached at construction time and routes
- * are registered through a {@link SocketServerRouter}.
+ * `close()` teardown. Routing is armed with `bind()` and torn down with
+ * `close()`; routes are registered through a {@link SocketServerRouter}.
  */
 describe('SocketServer', () => {
     it('Attend a connection with a static path', async (t: it.TestContext) => {
@@ -39,6 +33,7 @@ describe('SocketServer', () => {
         const calls: string[] = [];
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => { calls.push('foo'); })
             );
@@ -60,11 +55,59 @@ describe('SocketServer', () => {
         t.assert.deepStrictEqual(upgrade.ws.closeCalls, []);
     });
 
+    it('Emits `connection` once a matched upgrade completes its handshake', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        const seen: IncomingMessage[] = [];
+
+        const app = new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
+
+        app.on('connection', (_ws, req) => { seen.push(req); });
+
+        const req = { url: '/foo' } as IncomingMessage;
+        server.emit('upgrade', req, {} as unknown as Duplex, Buffer.alloc(0));
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        t.assert.strictEqual(seen.length, 1);
+        t.assert.strictEqual(seen[0], req);
+    });
+
+    it('Does not emit `connection` when no route matches (no handshake)', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        let fired = 0;
+
+        const app = new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
+
+        app.on('connection', () => { fired++; });
+
+        server.emit(
+            'upgrade',
+            { url: '/bar' } as IncomingMessage,
+            { end: () => {} } as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        t.assert.strictEqual(fake.upgrades.length, 0);
+        t.assert.strictEqual(fired, 0);
+    });
+
     it('Extract the params from the path', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/user/:id/:action', () => {})
             );
@@ -90,6 +133,7 @@ describe('SocketServer', () => {
         const calls: string[] = [];
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use(() => { calls.push('any'); })
             );
@@ -115,6 +159,7 @@ describe('SocketServer', () => {
         const calls: string[] = [];
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', (_ws, _req, next) => {
                     calls.push('fn-01');
@@ -145,6 +190,7 @@ describe('SocketServer', () => {
         // Mirrors Express: `ws.params` is a single mutable reference that is
         // reassigned to the currently executing handler's matched params.
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use((ws, _req, next) => { seen.push({ ...ws.params }); next(); })
                 .use('/user/:id', (ws, _req, next) => { seen.push({ ...ws.params }); next(); })
@@ -172,6 +218,7 @@ describe('SocketServer', () => {
         const calls: string[] = [];
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => { calls.push('fn-01'); })
                 .use('/foo', () => { calls.push('fn-02'); })
@@ -196,6 +243,7 @@ describe('SocketServer', () => {
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', (_ws, _req, next) => next())
                 .use('/foo', (_ws, _req, next) => next())
@@ -223,6 +271,7 @@ describe('SocketServer', () => {
         const error = new Error('handler exploded');
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => {
                     throw error;
@@ -259,6 +308,7 @@ describe('SocketServer', () => {
         } as unknown as Duplex;
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => {})
             );
@@ -290,6 +340,7 @@ describe('SocketServer', () => {
         // `/admin/../public` must NOT collapse to `/public` and reach the
         // handler; Express's `parseurl` keeps `..` as a literal segment.
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/public', () => {})
             );
@@ -321,6 +372,7 @@ describe('SocketServer', () => {
         // `//evil.com/foo` must NOT be resolved to `/foo` and reach the
         // handler; the WHATWG URL parser would treat `evil.com` as a host.
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => {})
             );
@@ -343,6 +395,7 @@ describe('SocketServer', () => {
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/files/*rest', () => {})
             );
@@ -366,6 +419,7 @@ describe('SocketServer', () => {
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/file/:name.:ext', () => {})
             );
@@ -388,6 +442,7 @@ describe('SocketServer', () => {
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/user{/:id}', () => {})
             );
@@ -411,6 +466,7 @@ describe('SocketServer', () => {
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/user{/:id}', () => {})
             );
@@ -436,6 +492,7 @@ describe('SocketServer', () => {
         const results: Record<string, unknown>[] = [];
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/user{/:id}{/:action}', ws => { results.push({ ...ws.params }); })
             );
@@ -463,6 +520,7 @@ describe('SocketServer', () => {
         const server = fakeServer();
 
         new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/user/:id', () => {})
             );
@@ -496,11 +554,12 @@ describe('SocketServer', () => {
         });
     });
 
-    it('Close every connected client and stop the server on close()', async (t: it.TestContext) => {
+    it('Close every connected client on close()', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = fakeServer(true);
+        const server = fakeServer();
 
         const app = new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => {})
             );
@@ -520,23 +579,56 @@ describe('SocketServer', () => {
 
         app.close();
 
+        // The live connection is dropped; the referenced server is left for
+        // its owner to stop (see the e2e suite for that guarantee).
         t.assert.deepStrictEqual(upgrade.ws.closeCalls, [
             { code: undefined, reason: undefined }
         ]);
-        t.assert.strictEqual(server.closeCount, 1);
     });
 
-    it('Leave an already-stopped server untouched on close()', (t: it.TestContext) => {
+    it('Detaches the upgrade listener on close() so later upgrades are ignored', (t: it.TestContext) => {
         const fake = new SocketServerFake();
-        const server = fakeServer(false);
+        const server = fakeServer();
 
         const app = new SocketServer({ server }, fake)
+            .bind()
             .use(new SocketServerRouter()
                 .use('/foo', () => {})
             );
 
         app.close();
 
-        t.assert.strictEqual(server.closeCount, 0);
+        // The listener is gone, so a late upgrade must reach neither the
+        // handshake nor the 404 path.
+        server.emit(
+            'upgrade',
+            { url: '/foo' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        t.assert.strictEqual(fake.upgrades.length, 0);
+    });
+
+    it('bind() is idempotent: a repeated bind() handles each upgrade once', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+
+        new SocketServer({ server }, fake)
+            .bind()
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
+
+        server.emit(
+            'upgrade',
+            { url: '/foo' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        // A stacked listener would have produced a second upgrade.
+        t.assert.strictEqual(fake.upgrades.length, 1);
     });
 });

@@ -1,4 +1,5 @@
 import type { MatchResult, ParamData } from 'path-to-regexp';
+import type { WebSocket } from 'ws';
 
 /**
  * A `ws` `WebSocket` instance decorated with the route match result

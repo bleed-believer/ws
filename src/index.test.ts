@@ -26,7 +26,7 @@ async function launch(
     const router = new SocketServerRouter();
     configure(router);
 
-    new SocketServer({ server }).use(router);
+    new SocketServer({ server }).use(router).bind();
 
     server.listen(0);
     await once(server, 'listening');
@@ -44,8 +44,10 @@ describe('SocketServer (e2e)', () => {
     it('Accepts a connection on a registered route and echoes messages', async (t: it.TestContext) => {
         const url = await launch(router => router
             .use('echo', ws => {
-                ws.addEventListener('message', e => {
-                    ws.send(`echo: ${e.data}`);
+                // Uses the `ws`-native EventEmitter API (`ws.on`), which
+                // `WebSocketObject` must preserve.
+                ws.on('message', data => {
+                    ws.send(`echo: ${data}`);
                 });
             }), t);
 
@@ -82,6 +84,29 @@ describe('SocketServer (e2e)', () => {
         await once(client, 'close');
     });
 
+    it('Emits `connection` on the server for each upgraded socket', async (t: it.TestContext) => {
+        const server = createServer();
+        const app = new SocketServer({ server })
+            .use(new SocketServerRouter().use('room', () => {}))
+            .bind();
+
+        const connections: unknown[] = [];
+        app.on('connection', ws => { connections.push(ws); });
+
+        server.listen(0);
+        await once(server, 'listening');
+        t.after(() => { if (server.listening) server.close(); });
+
+        const { port } = server.address() as AddressInfo;
+        const client = new WebSocket(`ws://localhost:${port}/room`);
+        await once(client, 'open');
+
+        t.assert.strictEqual(connections.length, 1);
+
+        client.close();
+        await once(client, 'close');
+    });
+
     it('Routes connections through nested routers', async (t: it.TestContext) => {
         const url = await launch(router => router
             .use('api', new SocketServerRouter()
@@ -95,6 +120,28 @@ describe('SocketServer (e2e)', () => {
 
         const [ data ] = await message;
         t.assert.strictEqual(data.toString(), '/api/chat/lobby');
+
+        client.close();
+        await once(client, 'close');
+    });
+
+    it('Starts routing when bind() runs while the server is already listening', async (t: it.TestContext) => {
+        const server = createServer();
+        server.listen(0);
+        await once(server, 'listening');
+        t.after(() => { if (server.listening) server.close(); });
+
+        // bind() is called after the server is already listening: it attaches
+        // the upgrade handler regardless of the server's current state.
+        new SocketServer({ server })
+            .use(new SocketServerRouter().use('late', ws => { ws.send('ok'); }))
+            .bind();
+
+        const { port } = server.address() as AddressInfo;
+        const client = new WebSocket(`ws://localhost:${port}/late`);
+
+        const [ data ] = await once(client, 'message');
+        t.assert.strictEqual(data.toString(), 'ok');
 
         client.close();
         await once(client, 'close');
@@ -162,10 +209,48 @@ describe('SocketServer (e2e)', () => {
         t.assert.strictEqual(error.mock.callCount(), 1);
     });
 
-    it('Closes the underlying server and its connected clients on close()', async (t: it.TestContext) => {
+    it('Resumes routing on a server restart when bind() is wired to `listening`', async (t: it.TestContext) => {
         const server = createServer();
         const app = new SocketServer({ server })
-            .use(new SocketServerRouter().use('any', () => {}));
+            .use(new SocketServerRouter().use('ping', ws => { ws.send('pong'); }))
+            .bind();
+
+        // Opt-in re-bind: on every (re)start of the server, re-attach routing.
+        server.on('listening', () => app.bind());
+        t.after(() => { if (server.listening) server.close(); });
+
+        // First lifecycle: start, connect, then tear the socket layer and the
+        // server down (the server is the caller's to stop).
+        server.listen(0);
+        await once(server, 'listening');
+        const first = (server.address() as AddressInfo).port;
+
+        const c1 = new WebSocket(`ws://localhost:${first}/ping`);
+        t.assert.strictEqual((await once(c1, 'message'))[0].toString(), 'pong');
+        c1.close();
+        await once(c1, 'close');
+
+        app.close();
+        server.close();
+        await once(server, 'close');
+
+        // Second lifecycle: the same Server is started again; the `listening`
+        // hook re-binds routing without reconstructing the SocketServer.
+        server.listen(0);
+        await once(server, 'listening');
+        const second = (server.address() as AddressInfo).port;
+
+        const c2 = new WebSocket(`ws://localhost:${second}/ping`);
+        t.assert.strictEqual((await once(c2, 'message'))[0].toString(), 'pong');
+        c2.close();
+        await once(c2, 'close');
+    });
+
+    it('Closes live connections on close() but leaves the HTTP server running', async (t: it.TestContext) => {
+        const server = createServer();
+        const app = new SocketServer({ server })
+            .use(new SocketServerRouter().use('any', () => {}))
+            .bind();
 
         server.listen(0);
         await once(server, 'listening');
@@ -176,11 +261,11 @@ describe('SocketServer (e2e)', () => {
         await once(client, 'open');
 
         const clientClosed = once(client, 'close');
-        const serverClosed = once(server, 'close');
         app.close();
 
+        // The live connection is dropped, but the HTTP server the caller owns
+        // keeps listening.
         await clientClosed;
-        await serverClosed;
-        t.assert.strictEqual(server.listening, false);
+        t.assert.strictEqual(server.listening, true);
     });
 });

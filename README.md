@@ -24,6 +24,9 @@ parameters, nested routers, and an Express-style `next()` chain.
 - **Sensible connection handling** — unmatched paths get an HTTP `404` before
   the handshake; unclaimed or throwing handlers close the socket with code
   `1011`.
+- **Explicit lifecycle** — construction has no side effects; you `bind()` to
+  start routing and `close()` to stop, without the class ever taking ownership
+  of the HTTP server it attaches to.
 - **ESM-only, zero runtime deps** besides `path-to-regexp`, with `ws` as a peer
   dependency.
 
@@ -40,57 +43,80 @@ Node.js 20+ is required.
 
 ```ts
 import { createServer } from 'node:http';
-import { SocketServer } from '@bleed-believer/ws';
+import { SocketServer, SocketServerRouter } from '@bleed-believer/ws';
 
-const httpServer = createServer();
+const server = createServer();
 
-const wsServer = new SocketServer()
-    .use('/chat/:room', (ws, req, next) => {
-        console.log(`New connection to room ${ws.params.room}`);
-        ws.on('message', (data) => {
-            ws.send(`echo: ${data}`);
-        });
-    });
+const app = new SocketServer({ server })
+    .use(new SocketServerRouter()
+        .use('/chat/:room', (ws, req, next) => {
+            console.log(`New connection to room ${ws.params.room}`);
+            ws.on('message', (data) => {
+                ws.send(`echo: ${data}`);
+            });
+        })
+    )
+    .bind();
 
-wsServer.bootstrap(httpServer);
-httpServer.listen(3000);
+server.listen(3000);
 ```
 
 Any client connecting to `ws://localhost:3000/chat/general` will be handled by
 the handler above, with `ws.params.room === 'general'` and `ws.path ===
 '/chat/general'`.
 
+The three steps are always the same: **construct** the server around an HTTP(S)
+server, **register** one or more `SocketServerRouter`s with `use()`, and
+**arm** the routing with `bind()`.
+
 ## Core concepts
 
 ### `SocketServer`
 
-`SocketServer` extends `SocketServerRouter` and adds the `bootstrap()` method
-that wires the router into a real HTTP(S) server.
+`SocketServer` is the entry point: it owns the `ws` `WebSocketServer` (in
+`noServer` mode) and dispatches upgrade requests to the routers you register.
+It extends `EventEmitter`, so you can subscribe to the connection events it
+re-emits (see [Events](#events)).
 
 ```ts
-new SocketServer(options?)
+new SocketServer(options, inject?)
 ```
 
-- `options` — forwarded to the underlying `ws` `WebSocketServer`, based on
-  `ws`'s `ServerOptions` with the fields that `SocketServer` manages internally
-  removed (`noServer`, `host`, `port`, `WebSocket`). Useful for things like
-  `maxPayload` or `perMessageDeflate`.
+- `options` — configuration for the server. It **must** include `server`, the
+  HTTP(S) server to attach to, and may include any field from `ws`'s
+  `ServerOptions` except the ones this class manages internally (`noServer`,
+  `server`, `host`, `port`). Useful for things like `maxPayload`,
+  `perMessageDeflate` or `verifyClient` (see
+  [Security](#security-verifying-the-connection-origin)).
+- `inject` — optional dependency overrides, used mainly in tests.
+
+Construction has **no side effects**: it does not touch the HTTP server until
+you call `bind()`.
 
 ```ts
-wsServer.bootstrap(server: Server): WebSocketServer
+app.use(router: SocketServerRouter): SocketServer
 ```
 
-Attaches an `upgrade` listener to `server` (any `EventEmitter` exposing
-`upgrade` and `close`, e.g. `http.Server` / `https.Server`). For every upgrade
-request:
+Mounts a router's routes onto the server, in registration order. Returns the
+same instance, so it can be chained. To register handlers by path you build a
+[`SocketServerRouter`](#socketserverrouter) and pass it here — `SocketServer`
+itself only accepts routers.
+
+```ts
+app.bind(): SocketServer
+```
+
+Attaches the `upgrade` handler to the server, so incoming upgrade requests start
+being routed. Safe to call whether or not the server is already listening, and
+**idempotent** — calling it more than once never stacks duplicate handlers. For
+every upgrade request:
 
 1. The request URL's pathname is matched against every registered route.
 2. If **no route matches**, the raw socket is rejected with a plain
-   `HTTP/1.1 404 Not Found` response and destroyed — the WebSocket handshake
-   never happens.
-3. If at least one route matches, the handshake completes and the matching
-   handlers are invoked **in registration order**, each decorated with the
-   route's `params` and `path`.
+   `HTTP/1.1 404 Not Found` response — the WebSocket handshake never happens.
+3. If at least one route matches, the handshake completes, the `connection`
+   event is emitted, and the matching handlers are invoked **in registration
+   order**, each decorated with the route's `params` and `path`.
 4. A handler **claims** the connection simply by not calling `next()`. If every
    matching handler calls `next()` (or there simply are none left), the socket
    is closed with code `1011` and reason `"No handler claimed the connection"`.
@@ -98,16 +124,56 @@ request:
    logged with `console.error` and the socket is closed with code `1011` and
    reason `"Handler threw an exception"`.
 
-The `upgrade` listener is automatically removed when the underlying server
-emits `close`.
+```ts
+app.close(): SocketServer
+```
 
-`bootstrap()` returns the `ws` `WebSocketServer` instance it creates, so you can
-interact with it directly (e.g. listen to its events or close it).
+Shuts the socket layer down: detaches the `upgrade` handler (undoing `bind()`)
+and closes every live WebSocket connection. The **HTTP server is left
+untouched** — this class did not start it, so stopping it is your
+responsibility (`server.close()`). After `close()` you can call `bind()` again
+to resume routing.
+
+#### Restarting the server
+
+Because `close()` leaves no listeners behind, resuming after a full server
+restart is an explicit, one-line opt-in: re-`bind()` whenever the server starts
+listening again.
+
+```ts
+const app = new SocketServer({ server }).use(router).bind();
+server.on('listening', () => app.bind());
+
+// later…
+app.close();     // stop routing + drop live connections
+server.close();  // you own the HTTP server's lifecycle
+
+// restarting the same server re-arms routing automatically:
+server.listen(3000);
+```
+
+#### Events
+
+`SocketServer` re-emits the `ws` server events that are meaningful while running
+in `noServer` mode:
+
+- `connection` — `(ws, request)`, emitted once a matched upgrade completes its
+  handshake, right before the handler chain runs.
+- `headers` — `(headers, request)`, emitted while the handshake response
+  headers are being built.
+- `wsClientError` — `(error, socket, request)`, emitted when a client sends an
+  invalid handshake.
+
+```ts
+app.on('connection', (ws, req) => {
+    console.log('handshake completed for', req.url);
+});
+```
 
 ### `SocketServerRouter`
 
-`SocketServerRouter` is the composable route registry. `SocketServer` inherits
-from it, so everything below also applies directly to `SocketServer` instances.
+`SocketServerRouter` is the composable route registry. You register handlers and
+sub-routers on it, then mount it on a `SocketServer` with `use()`.
 
 ```ts
 router.use(callback)
@@ -127,13 +193,14 @@ router.use(path, subRouter)
   equivalent).
 - `use()` returns `this`, so calls can be chained.
 
-Each call to `use()` returns the router/server instance, so you can chain
-registrations fluently, as shown in the [Quick start](#quick-start).
+`router.routes()` flattens the registry into the ordered list of
+`{ path, callback }` entries that `SocketServer.use()` consumes; you rarely need
+to call it yourself.
 
 #### Nesting routers
 
 ```ts
-import { SocketServerRouter, SocketServer } from '@bleed-believer/ws';
+import { SocketServer, SocketServerRouter } from '@bleed-believer/ws';
 
 const usersRouter = new SocketServerRouter()
     .use('/:id', (ws) => {
@@ -146,8 +213,9 @@ const usersRouter = new SocketServerRouter()
 const apiRouter = new SocketServerRouter()
     .use('/users', usersRouter);
 
-const wsServer = new SocketServer()
-    .use('/api', apiRouter);
+const app = new SocketServer({ server })
+    .use(new SocketServerRouter().use('/api', apiRouter))
+    .bind();
 
 // Effective routes:
 //   /api/users/:id
@@ -160,7 +228,7 @@ When several registered routes match the same URL, they run in registration
 order until one of them claims the connection:
 
 ```ts
-new SocketServer()
+const router = new SocketServerRouter()
     .use('/admin/:id', (ws, req, next) => {
         if (!isAuthorized(req)) {
             ws.close(4001, 'Unauthorized');
@@ -172,6 +240,8 @@ new SocketServer()
         // only reached if the previous handler called next()
         ws.on('message', handleAdminMessage);
     });
+
+new SocketServer({ server }).use(router).bind();
 ```
 
 If none of the matching handlers call `ws.close()` themselves and all of them
@@ -184,7 +254,7 @@ typed via the `RouteParameters<P>` helper, so `ws.params` is inferred straight
 from the literal route string — no manual generics required:
 
 ```ts
-new SocketServer()
+new SocketServerRouter()
     .use('/user/:id/:action', (ws) => {
         // ws.params: { id: string; action: string }
         ws.params.id;
@@ -214,7 +284,7 @@ reference is updated for the next handler. This only matters when you read them
 listener. Capture what you need synchronously at the top of the handler:
 
 ```ts
-new SocketServer()
+new SocketServerRouter()
     .use('/chat/:room', (ws) => {
         const { room } = ws.params; // capture up front
         ws.on('message', (data) => {
@@ -232,7 +302,7 @@ URL, and always receives untyped params (`ParamData`, i.e. `Record<string,
 string | string[]>`):
 
 ```ts
-new SocketServer()
+new SocketServerRouter()
     .use((ws, req) => {
         console.log('connection to', ws.path);
     });
@@ -259,15 +329,19 @@ handshake, so the upgrade is rejected before any handler runs:
 ```ts
 const ALLOWED = new Set([ 'https://app.example.com' ]);
 
-const wsServer = new SocketServer({
-    verifyClient: ({ origin, req }) => {
+const app = new SocketServer({
+    server,
+    // `ws` types `verifyClient` as a sync/async union, so annotate the
+    // parameter — TypeScript can't infer it across the union on its own.
+    verifyClient: (info: { origin: string }) => {
         // Reject browsers coming from an unexpected origin. Note that
         // non-browser clients can spoof or omit `Origin`, so treat this as
         // defense against CSWSH, not as authentication on its own.
-        return !origin || ALLOWED.has(origin);
+        return !info.origin || ALLOWED.has(info.origin);
     }
 })
-    .use('/chat/:room', (ws) => { /* ... */ });
+    .use(new SocketServerRouter().use('/chat/:room', (ws) => { /* ... */ }))
+    .bind();
 ```
 
 When `verifyClient` returns `false`, the client receives an HTTP `401` and the
@@ -279,11 +353,11 @@ trusting `Origin` alone.
 
 | Export | Description |
 | --- | --- |
-| `SocketServer` | Router-based server; `bootstrap(server)` attaches it to an HTTP(S) server and returns the created `WebSocketServer`. |
-| `SocketServerRouter` | Composable route registry (`use`, `routes`); base class of `SocketServer`. |
+| `SocketServer` | Router-based server; `use(router)` mounts routes, `bind()` starts routing on the HTTP(S) server passed at construction, `close()` detaches and drops live connections. Extends `EventEmitter`. |
+| `SocketServerRouter` | Composable route registry (`use`, `routes`). |
 | `RouteParameters<P>` | Type helper inferring the params object for a route pattern `P`. |
-| `Server` | Minimal `EventEmitter` shape (`upgrade`, `close`) required by `bootstrap`. |
-| `SocketServerOptions` | Options accepted by `SocketServer`'s constructor (subset of `ws`'s `ServerOptions`). |
+| `Server` | Minimal `EventEmitter` shape (an `upgrade` event) required by `SocketServer`'s `server` option. |
+| `SocketServerOptions` | Options accepted by `SocketServer`'s constructor: the required `server` plus a subset of `ws`'s `ServerOptions`. |
 | `WebSocketObject<T>` | A `ws` `WebSocket` decorated with the matched `path` and typed `params`. |
 | `WebSocketCallback<T>` | Handler signature: `(ws, req, next) => unknown`. |
 
