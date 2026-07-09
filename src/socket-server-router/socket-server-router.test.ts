@@ -65,4 +65,26 @@ describe('SocketServerRouter', () => {
             { path: '/bak/kek', name: 'fn-09' },
         ]);
     });
+
+    it('Collapse double slashes from a trailing-slash prefix', (t: it.TestContext) => {
+        const routes = new SocketServerRouter()
+            .use('api/', new SocketServerRouter()
+                .use('chat/:room', () => 'fn-01')
+                .use('users/:id', () => 'fn-02')
+            )
+            .routes()
+            .map(x => ({
+                path: x.path,
+                name: x.callback(
+                    {} as any,
+                    {} as any,
+                    () => {}
+                )
+            }));
+
+        t.assert.deepStrictEqual(routes, [
+            { path: '/api/chat/:room', name: 'fn-01' },
+            { path: '/api/users/:id', name: 'fn-02' },
+        ]);
+    });
 });

@@ -44,7 +44,7 @@ export class SocketServerRouter {
                     .map(x => ({
                         callback: x.callback,
                         path: typeof path === 'string' || typeof x.path === 'string'
-                        ?   (path ?? '') + (x.path ?? '')
+                        ?   ((path ?? '') + (x.path ?? '')).replace(/\/{2,}/g, '/')
                         :   undefined
                     }))
                     .forEach(x => out.push(x));

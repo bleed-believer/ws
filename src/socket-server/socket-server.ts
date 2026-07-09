@@ -53,8 +53,17 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
             // through a manual callback (that emit lives in the internal
             // listener `ws` only installs when it owns the server), so it
             // is surfaced here, once the handshake has completed, before
-            // the handler chain runs.
-            this.emit('connection', ws, req);
+            // the handler chain runs. Kept inside a try: this runs in an
+            // `async` callback, so a throwing `connection` listener would
+            // otherwise surface as an unhandledRejection and crash the
+            // process (Node >= 15) instead of just tearing down this socket.
+            try {
+                this.emit('connection', ws, req);
+            } catch (err) {
+                this.#injected.console.error(err);
+                ws.close(1011, 'A connection listener threw an exception');
+                return;
+            }
 
             for (const { result, callback } of queue) {
                 const wsObj = ws as unknown as WebSocketObject<ParamData>;

@@ -103,6 +103,42 @@ describe('SocketServer', () => {
         t.assert.strictEqual(fired, 0);
     });
 
+    it('Closes the socket when a `connection` listener throws, without crashing the process', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        const calls: string[] = [];
+        const error = new Error('connection listener exploded');
+
+        const app = new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', () => { calls.push('fn-01'); })
+            );
+
+        // A throwing `connection` listener runs inside the async handleUpgrade
+        // callback; unguarded it would become an unhandledRejection and crash
+        // the process, so instead the socket is torn down and the error logged.
+        app.on('connection', () => { throw error; });
+
+        server.emit(
+            'upgrade',
+            { url: '/foo' } as IncomingMessage,
+            {} as unknown as Duplex,
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        // `done` resolving (not rejecting) is the guarantee against the crash.
+        await upgrade.done;
+
+        // The handler chain never runs once the listener threw.
+        t.assert.deepStrictEqual(calls, []);
+        t.assert.deepStrictEqual(fake.errors, [ error ]);
+        t.assert.deepStrictEqual(upgrade.ws.closeCalls, [
+            { code: 1011, reason: 'A connection listener threw an exception' }
+        ]);
+    });
+
     it('Extract the params from the path', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();
