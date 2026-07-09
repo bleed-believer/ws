@@ -21,6 +21,31 @@ function fakeServer(): Server {
 }
 
 /**
+ * A fake upgrade socket: an `EventEmitter` (so {@link SocketServer} can attach
+ * its `error` guard, mirroring a real `Duplex`) that records every `end()`
+ * payload and `destroy()` call for assertions. A real socket always exposes
+ * these, so the tests must too — passing a bare `{}` would hide the guard.
+ */
+type FakeSocket = Duplex & { ends: string[]; destroyCount: number };
+function fakeSocket(): FakeSocket {
+    const emitter = new EventEmitter();
+    const socket = Object.assign(emitter, {
+        ends: [] as string[],
+        destroyCount: 0,
+        end(chunk?: unknown) {
+            if (chunk !== undefined) socket.ends.push(String(chunk));
+            emitter.emit('finish');
+            return socket;
+        },
+        destroy() {
+            socket.destroyCount++;
+            return socket;
+        }
+    });
+    return socket as unknown as FakeSocket;
+}
+
+/**
  * Unit tests for {@link SocketServer}, using {@link SocketServerFake} to
  * simulate upgrades without opening real network sockets: route matching,
  * param extraction, the `next()` chain, error handling, 404 rejection and
@@ -42,7 +67,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo?token=bleed' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -70,7 +95,7 @@ describe('SocketServer', () => {
         app.on('connection', (_ws, req) => { seen.push(req); });
 
         const req = { url: '/foo' } as IncomingMessage;
-        server.emit('upgrade', req, {} as unknown as Duplex, Buffer.alloc(0));
+        server.emit('upgrade', req, fakeSocket(), Buffer.alloc(0));
 
         const [ upgrade ] = fake.upgrades;
         await upgrade.done;
@@ -95,7 +120,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/bar' } as IncomingMessage,
-            { end: () => {} } as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -123,7 +148,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -152,7 +177,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/user/555/edit' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -178,7 +203,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/whatever/path' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -208,7 +233,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -237,7 +262,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/user/7' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -264,7 +289,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -289,7 +314,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -319,7 +344,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -336,13 +361,7 @@ describe('SocketServer', () => {
     it('Reject with 404 when no route matches', (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();
-        const ends: string[] = [];
-
-        const duplex = {
-            end: (chunk: unknown) => {
-                ends.push(String(chunk));
-            }
-        } as unknown as Duplex;
+        const socket = fakeSocket();
 
         new SocketServer({ server }, fake)
             .bind()
@@ -353,26 +372,22 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/bar' } as IncomingMessage,
-            duplex,
+            socket,
             Buffer.alloc(0)
         );
 
         t.assert.strictEqual(fake.upgrades.length, 0);
-        t.assert.deepStrictEqual(ends, [
+        t.assert.deepStrictEqual(socket.ends, [
             'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
         ]);
+        // The read side is released once the response drains.
+        t.assert.strictEqual(socket.destroyCount, 1);
     });
 
     it('Does not normalize dot-segments in the request path (Express parity)', (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();
-        const ends: string[] = [];
-
-        const duplex = {
-            end: (chunk: unknown) => {
-                ends.push(String(chunk));
-            }
-        } as unknown as Duplex;
+        const socket = fakeSocket();
 
         // `/admin/../public` must NOT collapse to `/public` and reach the
         // handler; Express's `parseurl` keeps `..` as a literal segment.
@@ -385,12 +400,12 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/admin/../public' } as IncomingMessage,
-            duplex,
+            socket,
             Buffer.alloc(0)
         );
 
         t.assert.strictEqual(fake.upgrades.length, 0);
-        t.assert.deepStrictEqual(ends, [
+        t.assert.deepStrictEqual(socket.ends, [
             'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
         ]);
     });
@@ -398,13 +413,7 @@ describe('SocketServer', () => {
     it('Does not strip the authority of a protocol-relative request path', (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();
-        const ends: string[] = [];
-
-        const duplex = {
-            end: (chunk: unknown) => {
-                ends.push(String(chunk));
-            }
-        } as unknown as Duplex;
+        const socket = fakeSocket();
 
         // `//evil.com/foo` must NOT be resolved to `/foo` and reach the
         // handler; the WHATWG URL parser would treat `evil.com` as a host.
@@ -417,14 +426,68 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '//evil.com/foo' } as IncomingMessage,
-            duplex,
+            socket,
             Buffer.alloc(0)
         );
 
         t.assert.strictEqual(fake.upgrades.length, 0);
-        t.assert.deepStrictEqual(ends, [
+        t.assert.deepStrictEqual(socket.ends, [
             'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
         ]);
+    });
+
+    it('Attaches a socket `error` guard so a TCP error never crashes the process', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        const socket = fakeSocket();
+        const error = new Error('ECONNRESET');
+
+        new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
+
+        // A non-matching upgrade takes the 404 path; the guard must remain
+        // attached so a subsequent socket error is handled, not thrown.
+        server.emit(
+            'upgrade',
+            { url: '/bar' } as IncomingMessage,
+            socket,
+            Buffer.alloc(0)
+        );
+
+        t.assert.ok(socket.listenerCount('error') >= 1);
+        // Unguarded, this would throw as an uncaught exception and crash.
+        t.assert.doesNotThrow(() => socket.emit('error', error));
+        t.assert.deepStrictEqual(fake.errors, [ error ]);
+        t.assert.ok(socket.destroyCount >= 1);
+    });
+
+    it('Hands the socket `error` guard off to `ws` once the handshake completes', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        const socket = fakeSocket();
+
+        new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', () => {})
+            );
+
+        server.emit(
+            'upgrade',
+            { url: '/foo' } as IncomingMessage,
+            socket,
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        // Once upgraded, the `ws` WebSocket owns error handling; the
+        // upgrade-scoped guard must be removed to avoid a leaked listener.
+        t.assert.strictEqual(socket.listenerCount('error'), 0);
     });
 
     it('Extract a wildcard param as an array of segments', async (t: it.TestContext) => {
@@ -440,7 +503,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/files/a/b/c' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -464,7 +527,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/file/report.pdf' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -487,7 +550,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/user/123' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -511,7 +574,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/user' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -538,7 +601,7 @@ describe('SocketServer', () => {
             server.emit(
                 'upgrade',
                 { url } as IncomingMessage,
-                {} as unknown as Duplex,
+                fakeSocket(),
                 Buffer.alloc(0)
             );
         }
@@ -565,7 +628,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/user/123/' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -604,7 +667,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -640,7 +703,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 
@@ -676,7 +739,7 @@ describe('SocketServer', () => {
         server.emit(
             'upgrade',
             { url: '/foo' } as IncomingMessage,
-            {} as unknown as Duplex,
+            fakeSocket(),
             Buffer.alloc(0)
         );
 

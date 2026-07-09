@@ -23,6 +23,19 @@ import { createRouteMatcher } from '../route-matcher/index.js';
  */
 export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
     #upgradeCallback = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+        // A raw upgrade socket with no `error` listener crashes the whole
+        // process on any TCP error during the handshake (a client `RST`
+        // yields `ECONNRESET`/`EPIPE`, which Node throws as an uncaught
+        // `error` event — a trivial, unauthenticated remote DoS). `ws`
+        // mandates attaching one for the duration of the upgrade; it stays
+        // on through the 404 write and the handshake window, and is handed
+        // off to `ws` (which installs its own) once the socket is upgraded.
+        const onSocketError = (err: Error) => {
+            this.#injected.console.error(err);
+            socket.destroy();
+        };
+        socket.on('error', onSocketError);
+
         // Extract the path exactly as Express 5's `parseurl` does: strip
         // the query string and nothing else. The WHATWG `URL` parser is
         // deliberately avoided here because it normalizes dot-segments
@@ -44,11 +57,20 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
         }
 
         if (queue.length === 0) {
+            // `onSocketError` stays attached: `end()` can still fail (broken
+            // pipe) and must not crash the process. Destroy once the 404
+            // response has drained, releasing the still-open read side.
+            socket.once('finish', () => socket.destroy());
             socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
             return;
         }
 
         return this.#wss.handleUpgrade(req, socket, head, async (ws, req) => {
+            // The handshake is complete and the `ws` WebSocket now owns the
+            // socket's error handling, so the upgrade-scoped guard is handed
+            // off here to avoid a leaked listener and double reporting.
+            socket.removeListener('error', onSocketError);
+
             // `ws` never emits `connection` for a `handleUpgrade` handled
             // through a manual callback (that emit lives in the internal
             // listener `ws` only installs when it owns the server), so it
