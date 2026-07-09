@@ -785,6 +785,22 @@ describe('SocketServer', () => {
         t.assert.strictEqual(fake.options?.clientTracking, true);
     });
 
+    it('Forces path off, so `ws` never double-filters an already-routed upgrade', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+
+        // The type omits `path`, but a JS caller could still smuggle one in.
+        // Request-path routing belongs to this layer, so the constructor must
+        // pin `path` to undefined; otherwise `ws`'s own exact-equality filter
+        // would reject a matched upgrade with a bare 400 inside handleUpgrade.
+        new SocketServer(
+            { server, path: '/ws' } as SocketServerOptions,
+            fake
+        );
+
+        t.assert.strictEqual(fake.options?.path, undefined);
+    });
+
     it('bind() is idempotent: a repeated bind() handles each upgrade once', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();

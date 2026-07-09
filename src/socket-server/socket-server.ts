@@ -157,6 +157,11 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
             // on. A rogue `clientTracking: false` slipping through would leave
             // that set `undefined` and break teardown, so it is pinned here.
             clientTracking: true,
+            // Also hard-forced off: request-path routing belongs to this layer.
+            // A rogue `path` smuggled past the type would make `ws`'s own filter
+            // reject an already-matched upgrade with a bare `400` inside
+            // `handleUpgrade` (and, being exact-equality, break params/wildcards).
+            path: undefined,
         }) as WebSocketServer;
 
         // `connection` is emitted manually from the `handleUpgrade` callback
