@@ -3,9 +3,7 @@
         "moduleResolution": "node16",
         "module": "node20",
         "target": "es2025",
-        
-        "experimentalDecorators": true,
-        "emitDecoratorMetadata": true,
+
         "verbatimModuleSyntax": true,
         "sourceMap": true,
         "strict": true,

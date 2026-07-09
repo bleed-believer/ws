@@ -85,9 +85,10 @@ new SocketServer(options, inject?)
 - `options` — configuration for the server. It **must** include `server`, the
   HTTP(S) server to attach to, and may include any field from `ws`'s
   `ServerOptions` except the ones this class manages internally (`noServer`,
-  `server`, `host`, `port`, `clientTracking`). `clientTracking` is pinned to
-  `true` because `close()` relies on the tracked `clients` set to drop every
-  live connection. Useful for things like `maxPayload`,
+  `server`, `host`, `port`, `clientTracking`, `path`). `clientTracking` is
+  pinned to `true` because `close()` relies on the tracked `clients` set to
+  drop every live connection; `path` is stripped because request-path routing
+  belongs to this layer, not to `ws`'s own path filter. Useful for things like `maxPayload`,
   `perMessageDeflate` or `verifyClient` (see
   [Security](#security-verifying-the-connection-origin)).
 - `inject` — optional dependency overrides, used mainly in tests.
@@ -187,9 +188,10 @@ router.use(subRouter)
 router.use(path, subRouter)
 ```
 
-- `callback` — a `WebSocketCallback<T>`, invoked as `(ws, req, next) => void |
-  Promise<void>`, registered either for every path (no `path` argument) or for
-  connections whose URL matches `path`.
+- `callback` — a `WebSocketCallback<T>`, invoked as `(ws, req, next) =>
+  unknown` (sync or `async`; a returned promise is awaited), registered either
+  for every path (no `path` argument) or for connections whose URL matches
+  `path`.
 - `subRouter` — another `SocketServerRouter` instance, optionally mounted under
   a path prefix. Prefixes are concatenated as routers are nested, so a
   sub-router mounted at `/api` that itself registers `/users/:id` resolves to
