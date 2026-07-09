@@ -85,7 +85,9 @@ new SocketServer(options, inject?)
 - `options` — configuration for the server. It **must** include `server`, the
   HTTP(S) server to attach to, and may include any field from `ws`'s
   `ServerOptions` except the ones this class manages internally (`noServer`,
-  `server`, `host`, `port`). Useful for things like `maxPayload`,
+  `server`, `host`, `port`, `clientTracking`). `clientTracking` is pinned to
+  `true` because `close()` relies on the tracked `clients` set to drop every
+  live connection. Useful for things like `maxPayload`,
   `perMessageDeflate` or `verifyClient` (see
   [Security](#security-verifying-the-connection-origin)).
 - `inject` — optional dependency overrides, used mainly in tests.

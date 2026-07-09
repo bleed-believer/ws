@@ -8,12 +8,14 @@ import type { Server } from './server.js';
  * attach to and with the fields that {@link SocketServer} manages internally
  * removed: `noServer` (always `true`, since it runs in `noServer` mode),
  * `server` (replaced by the {@link Server} required here, so `ws` never owns
- * the upgrade handling) and `host`/`port` (the underlying HTTP server owns
- * the listening address).
+ * the upgrade handling), `host`/`port` (the underlying HTTP server owns the
+ * listening address) and `clientTracking` (always `true`, because
+ * {@link SocketServer.close} relies on the `clients` set to drop every live
+ * connection; disabling it would leave `close()` unable to enumerate them).
  */
 export interface SocketServerOptions extends Omit<
     ServerOptions,
-    'noServer' | 'server' | 'host' | 'port'
+    'noServer' | 'server' | 'host' | 'port' | 'clientTracking'
 > {
     /**
      * The HTTP(S) server whose `upgrade` event the socket server attaches to

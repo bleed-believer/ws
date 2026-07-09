@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
-import type { Server } from './interfaces/index.js';
+import type { Server, SocketServerOptions } from './interfaces/index.js';
 
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
@@ -609,6 +609,21 @@ describe('SocketServer', () => {
         );
 
         t.assert.strictEqual(fake.upgrades.length, 0);
+    });
+
+    it('Forces clientTracking on, so close() can always enumerate live clients', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+
+        // The type omits `clientTracking`, but a JS caller could still smuggle
+        // `false` in; the constructor must pin it back to `true` regardless,
+        // otherwise `ws` leaves `clients` undefined and close() throws.
+        new SocketServer(
+            { server, clientTracking: false } as SocketServerOptions,
+            fake
+        );
+
+        t.assert.strictEqual(fake.options?.clientTracking, true);
     });
 
     it('bind() is idempotent: a repeated bind() handles each upgrade once', async (t: it.TestContext) => {

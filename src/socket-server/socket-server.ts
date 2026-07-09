@@ -110,6 +110,11 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
             ...options,
             noServer: true,
             server: undefined,
+            // Hard-forced (not just omitted from the type): `close()` iterates
+            // `this.#wss.clients`, which `ws` only maintains while tracking is
+            // on. A rogue `clientTracking: false` slipping through would leave
+            // that set `undefined` and break teardown, so it is pinned here.
+            clientTracking: true,
         }) as WebSocketServer;
 
         // `connection` is emitted manually from the `handleUpgrade` callback

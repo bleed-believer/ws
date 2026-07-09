@@ -54,6 +54,12 @@ export class SocketServerFake implements SocketServerInject {
         return this.#upgrades;
     }
 
+    #options?: Record<string, unknown>;
+    /** The options {@link SocketServer} forwarded to the `WebSocketServer`. */
+    get options(): Record<string, unknown> | undefined {
+        return this.#options;
+    }
+
     readonly WebSocketServer: SocketServerInject['WebSocketServer'];
 
     #errors: unknown[] = [];
@@ -78,12 +84,16 @@ export class SocketServerFake implements SocketServerInject {
         };
 
         const upgrades = this.#upgrades;
+        const captureOptions = (options: Record<string, unknown>) => {
+            this.#options = options;
+        };
         this.WebSocketServer = class extends EventEmitter<WebSocketServerEventMap> {
             /** Every fake socket produced by {@link handleUpgrade}. */
             clients = new Set<SocketFakeWebSocket>();
 
-            constructor(_options: { noServer: true }) {
+            constructor(options: { noServer: true }) {
                 super();
+                captureOptions(options);
             }
 
             handleUpgrade(

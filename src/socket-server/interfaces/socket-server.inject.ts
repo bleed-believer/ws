@@ -17,6 +17,7 @@ export interface SocketServerInject {
         o: {
             noServer: true;
             server?: undefined;
+            clientTracking?: true;
         }
     ) => WebSocketServerObject;
 
