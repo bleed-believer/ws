@@ -66,6 +66,48 @@ describe('SocketServerRouter', () => {
         ]);
     });
 
+    it('Marks a pathless handler mounted under a prefix as a prefix mount (end: false)', (t: it.TestContext) => {
+        const routes = new SocketServerRouter()
+            .use('/api', new SocketServerRouter()
+                .use(() => 'mw')          // pathless -> prefix mount
+                .use('/users', () => 'exact')
+            )
+            .routes()
+            .map(x => ({ path: x.path, end: x.end }));
+
+        t.assert.deepStrictEqual(routes, [
+            { path: '/api', end: false },        // covers /api and /api/*
+            { path: '/api/users', end: true },   // stays an exact route
+        ]);
+    });
+
+    it('Propagates the prefix mount outward through further nesting', (t: it.TestContext) => {
+        const routes = new SocketServerRouter()
+            .use('/api', new SocketServerRouter()
+                .use('/v1', new SocketServerRouter()
+                    .use(() => 'mw')
+                )
+            )
+            .routes()
+            .map(x => ({ path: x.path, end: x.end }));
+
+        t.assert.deepStrictEqual(routes, [
+            { path: '/api/v1', end: false },
+        ]);
+    });
+
+    it('Leaves a top-level pathless handler as a plain catch-all (no prefix mount)', (t: it.TestContext) => {
+        const routes = new SocketServerRouter()
+            .use(() => 'mw')
+            .routes()
+            .map(x => ({ path: x.path, end: x.end }));
+
+        // No prefix to mount under: it stays pathless and matches everything.
+        t.assert.deepStrictEqual(routes, [
+            { path: undefined, end: undefined },
+        ]);
+    });
+
     it('Collapse double slashes from a trailing-slash prefix', (t: it.TestContext) => {
         const routes = new SocketServerRouter()
             .use('api/', new SocketServerRouter()

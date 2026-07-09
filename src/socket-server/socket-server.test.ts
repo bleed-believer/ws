@@ -490,6 +490,66 @@ describe('SocketServer', () => {
         t.assert.strictEqual(socket.listenerCount('error'), 0);
     });
 
+    it('Runs a pathless middleware mounted under a prefix for the prefix subpaths', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        const seen: string[] = [];
+
+        // `router.use('/api', mw)` with a pathless `mw` must cover `/api` AND
+        // everything below it (Express-style prefix mount), then hand off to
+        // the exact route that claims the connection.
+        new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/api', new SocketServerRouter()
+                    .use((ws, _req, next) => { seen.push(`mw:${ws.path}`); next(); })
+                )
+                .use('/api/users', ws => { seen.push(`handler:${ws.path}`); })
+            );
+
+        server.emit(
+            'upgrade',
+            { url: '/api/users' } as IncomingMessage,
+            fakeSocket(),
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        // The middleware saw the full request path, not just the mount prefix.
+        t.assert.deepStrictEqual(seen, [ 'mw:/api/users', 'handler:/api/users' ]);
+        t.assert.deepStrictEqual(upgrade.ws.closeCalls, []);
+    });
+
+    it('Does not run a prefix-mounted middleware for a sibling path outside the prefix', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+        const seen: string[] = [];
+
+        new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/api', new SocketServerRouter()
+                    .use((_ws, _req, next) => { seen.push('mw'); next(); })
+                )
+                .use(() => { seen.push('catch-all'); })
+            );
+
+        server.emit(
+            'upgrade',
+            { url: '/public' } as IncomingMessage,
+            fakeSocket(),
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        // `/public` is outside `/api`, so only the catch-all runs.
+        t.assert.deepStrictEqual(seen, [ 'catch-all' ]);
+    });
+
     it('Extract a wildcard param as an array of segments', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();

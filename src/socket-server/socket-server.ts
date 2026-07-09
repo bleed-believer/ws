@@ -211,7 +211,7 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
             .routes()
             .forEach(x => this.#routes.push({
                 callback: x.callback,
-                matchFn: createRouteMatcher(x.path)
+                matchFn: createRouteMatcher(x.path, x.end)
             }));
 
         return this;

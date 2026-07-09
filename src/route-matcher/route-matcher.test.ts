@@ -63,4 +63,43 @@ describe('route-matcher', () => {
     it('Rejects the removed :id? modifier (Express parity)', (t: it.TestContext) => {
         t.assert.throws(() => createRouteMatcher('/user/:id?'));
     });
+
+    it('Matches only the exact path when end is true (the default)', (t: it.TestContext) => {
+        const matchFn = createRouteMatcher('/api');
+
+        t.assert.notStrictEqual(matchFn('/api'), false);
+        t.assert.strictEqual(matchFn('/api/users'), false);
+    });
+
+    it('Matches a prefix (and its subpaths) when end is false', (t: it.TestContext) => {
+        const matchFn = createRouteMatcher('/api', false);
+
+        t.assert.notStrictEqual(matchFn('/api'), false);
+        t.assert.notStrictEqual(matchFn('/api/users'), false);
+        t.assert.notStrictEqual(matchFn('/api/a/b'), false);
+        // Must respect segment boundaries: `/apix` is not under `/api`.
+        t.assert.strictEqual(matchFn('/apix'), false);
+        t.assert.strictEqual(matchFn('/other'), false);
+    });
+
+    it('Exposes the full request path (not just the prefix) on a prefix match', (t: it.TestContext) => {
+        const matchFn = createRouteMatcher('/api', false);
+        const result = matchFn('/api/users/42');
+
+        t.assert.notStrictEqual(result, false);
+        if (result) {
+            t.assert.strictEqual(result.path, '/api/users/42');
+        }
+    });
+
+    it('Still extracts params on a prefix match', (t: it.TestContext) => {
+        const matchFn = createRouteMatcher('/user/:id', false);
+        const result = matchFn('/user/7/messages');
+
+        t.assert.notStrictEqual(result, false);
+        if (result) {
+            t.assert.strictEqual(result.path, '/user/7/messages');
+            t.assert.deepStrictEqual({ ...result.params }, { id: '7' });
+        }
+    });
 });

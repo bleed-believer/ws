@@ -22,13 +22,22 @@ export class SocketServerRouter {
      * sub-routers, into a single ordered list of routes. Path prefixes are
      * concatenated as sub-routers are unwrapped; pathless entries stay
      * `undefined` (matching any path) unless nested under a prefixed one.
+     *
+     * `end` marks how the resulting path is matched: `true` (the default) for
+     * an exact route, `false` for a **prefix mount** — a pathless handler or
+     * sub-router mounted under a prefix, which then matches that prefix and
+     * everything below it, the way Express's `app.use('/api', mw)` does. The
+     * flag propagates outward, so wrapping a prefix mount under a further
+     * prefix keeps it a prefix mount.
      */
     routes(): {
         path?: string;
+        end?: boolean;
         callback: WebSocketCallback<ParamData>;
     }[] {
         const out: {
             path?: string;
+            end?: boolean;
             callback: WebSocketCallback<ParamData>;
         }[] = [];
 
@@ -41,12 +50,19 @@ export class SocketServerRouter {
             } else {
                 target
                     .routes()
-                    .map(x => ({
-                        callback: x.callback,
-                        path: typeof path === 'string' || typeof x.path === 'string'
-                        ?   ((path ?? '') + (x.path ?? '')).replace(/\/{2,}/g, '/')
-                        :   undefined
-                    }))
+                    .map(x => {
+                        // A pathless child mounted under a prefix becomes a
+                        // prefix mount; an already-prefix-mounted child stays
+                        // one however deep it is re-nested.
+                        const isPrefixMount = typeof path === 'string' && typeof x.path !== 'string';
+                        return {
+                            callback: x.callback,
+                            end: (x.end ?? true) && !isPrefixMount,
+                            path: typeof path === 'string' || typeof x.path === 'string'
+                            ?   ((path ?? '') + (x.path ?? '')).replace(/\/{2,}/g, '/')
+                            :   undefined
+                        };
+                    })
                     .forEach(x => out.push(x));
             }
         }
