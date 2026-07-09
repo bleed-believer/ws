@@ -19,6 +19,8 @@ export interface SocketServerInject {
             server?: undefined;
             clientTracking?: true;
             path?: undefined;
+            host?: undefined;
+            port?: undefined;
         }
     ) => WebSocketServerObject;
 

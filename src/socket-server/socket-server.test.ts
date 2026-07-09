@@ -801,6 +801,51 @@ describe('SocketServer', () => {
         t.assert.strictEqual(fake.options?.path, undefined);
     });
 
+    it('Forces host/port off, since the external HTTP server owns the address', (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+
+        // Dead options in noServer mode; pinned to undefined so a JS caller
+        // can't smuggle a misleading listening address past the type.
+        new SocketServer(
+            { server, host: '0.0.0.0', port: 8080 } as SocketServerOptions,
+            fake
+        );
+
+        t.assert.strictEqual(fake.options?.host, undefined);
+        t.assert.strictEqual(fake.options?.port, undefined);
+    });
+
+    it('Does not overwrite a handler-issued close when the chain ends unclaimed', async (t: it.TestContext) => {
+        const fake = new SocketServerFake();
+        const server = fakeServer();
+
+        // A handler closes with its own code, then calls next() to the end of
+        // the chain. The automatic "No handler claimed" 1011 must NOT clobber
+        // the handler's close over an already-closing socket.
+        new SocketServer({ server }, fake)
+            .bind()
+            .use(new SocketServerRouter()
+                .use('/foo', (ws, _req, next) => { ws.close(4001, 'bye'); next(); })
+                .use('/foo', (_ws, _req, next) => next())
+            );
+
+        server.emit(
+            'upgrade',
+            { url: '/foo' } as IncomingMessage,
+            fakeSocket(),
+            Buffer.alloc(0)
+        );
+
+        const [ upgrade ] = fake.upgrades;
+        await upgrade.done;
+
+        // Only the handler's close is recorded; no redundant 1011.
+        t.assert.deepStrictEqual(upgrade.ws.closeCalls, [
+            { code: 4001, reason: 'bye' }
+        ]);
+    });
+
     it('bind() is idempotent: a repeated bind() handles each upgrade once', async (t: it.TestContext) => {
         const fake = new SocketServerFake();
         const server = fakeServer();

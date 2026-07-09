@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream';
 import type { Server, SocketServerOptions, WebSocketCallback, WebSocketObject, SocketServerInject, WebSocketServerEventMap } from './interfaces/index.js';
 import type { SocketServerRouter } from '../socket-server-router/index.js';
 
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import EventEmitter from 'node:events';
 
 import { createRouteMatcher } from '../route-matcher/index.js';
@@ -110,7 +110,12 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
                     await callback(wsObj, req, nextFn);
                 } catch (err) {
                     this.#injected.console.error(err);
-                    ws.close(1011, 'Handler threw an exception');
+                    // Guarded: a handler may have already called `ws.close()`
+                    // (with its own code) before throwing; don't clobber that
+                    // with a redundant `1011` over an already-closing socket.
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.close(1011, 'Handler threw an exception');
+                    }
                     return;
                 }
 
@@ -119,7 +124,11 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
                 }
             }
 
-            ws.close(1011, 'No handler claimed the connection');
+            // Guarded for the same reason: a handler that closed the socket and
+            // then called `next()` through to the end must keep its close code.
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.close(1011, 'No handler claimed the connection');
+            }
         });
     };
 
@@ -162,6 +171,12 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
             // reject an already-matched upgrade with a bare `400` inside
             // `handleUpgrade` (and, being exact-equality, break params/wildcards).
             path: undefined,
+            // The external HTTP(S) server owns the listening address; in
+            // `noServer` mode `ws` never binds a socket, so these are dead
+            // options. Pinned to `undefined` anyway (not just omitted from the
+            // type) so a JS caller can't smuggle in a misleading value.
+            host: undefined,
+            port: undefined,
         }) as WebSocketServer;
 
         // `connection` is emitted manually from the `handleUpgrade` callback

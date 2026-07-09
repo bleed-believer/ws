@@ -1,10 +1,10 @@
 import type { IncomingMessage } from 'node:http';
 import type { ParamData } from 'path-to-regexp';
-import type { WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
 
 import type { WebSocketServerEventMap, SocketServerInject } from './interfaces/index.js';
 
+import { WebSocket } from 'ws';
 import { EventEmitter } from 'node:events';
 
 /**
@@ -24,6 +24,12 @@ export interface SocketFakeWebSocket {
     closeCalls: SocketFakeCloseCall[];
     params?: ParamData;
     path?: string;
+    /**
+     * Mirrors `ws`'s `readyState` (`OPEN` until `close()` is called), so
+     * {@link SocketServer}'s "already closing?" guard can be exercised: a
+     * handler that closes the socket must suppress the automatic `1011`.
+     */
+    readyState: number;
 
     close(code?: number, reason?: string): void;
 }
@@ -105,8 +111,10 @@ export class SocketServerFake implements SocketServerInject {
                 const closeCalls: SocketFakeCloseCall[] = [];
                 const ws: SocketFakeWebSocket = {
                     closeCalls,
+                    readyState: WebSocket.OPEN,
                     close(code?: number, reason?: string): void {
                         closeCalls.push({ code, reason });
+                        this.readyState = WebSocket.CLOSED;
                     }
                 };
 

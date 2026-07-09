@@ -116,13 +116,16 @@ every upgrade request:
 1. The request URL's pathname is matched against every registered route.
 2. If **no route matches**, the raw socket is rejected with a plain
    `HTTP/1.1 404 Not Found` response — the WebSocket handshake never happens.
-3. If at least one route matches, the handshake completes, the `connection`
-   event is emitted, and the matching handlers are invoked **in registration
-   order**, each decorated with the route's `params` and `path`.
-4. A handler **claims** the connection simply by not calling `next()`. If every
+3. If at least one route matches, the handshake completes and the `connection`
+   event is emitted. If a `connection` listener **throws**, the error is logged
+   with `console.error` and the socket is closed with code `1011` and reason
+   `"A connection listener threw an exception"` — the handler chain never runs.
+4. Otherwise the matching handlers are invoked **in registration order**, each
+   decorated with the route's `params` and `path`.
+5. A handler **claims** the connection simply by not calling `next()`. If every
    matching handler calls `next()` (or there simply are none left), the socket
    is closed with code `1011` and reason `"No handler claimed the connection"`.
-5. If a handler **throws** (or its returned promise rejects), the error is
+6. If a handler **throws** (or its returned promise rejects), the error is
    logged with `console.error` and the socket is closed with code `1011` and
    reason `"Handler threw an exception"`.
 
@@ -314,6 +317,32 @@ This is useful for cross-cutting concerns (logging, auth checks) that should
 run for every connection ahead of more specific routes — combine it with
 `next()` so it doesn't swallow the connection.
 
+#### Prefix-mounting a pathless handler
+
+Mounting a pathless handler (or a router whose handlers are pathless) under a
+path prefix scopes that catch-all to the prefix and **everything below it**,
+exactly like Express's `app.use('/api', mw)`. The handler still sees the full
+request path in `ws.path`, not just the consumed prefix:
+
+```ts
+const app = new SocketServer({ server })
+    .use(new SocketServerRouter()
+        // Runs for `/api` and every subpath (`/api/users`, `/api/a/b`, …),
+        // but NOT for siblings outside the prefix (`/public`).
+        .use('/api', new SocketServerRouter()
+            .use((ws, req, next) => {
+                console.log('api hit:', ws.path); // full path, e.g. /api/users
+                next();
+            })
+        )
+        .use('/api/users', (ws) => { /* claims /api/users */ })
+    )
+    .bind();
+```
+
+A pathless handler registered **without** a prefix still matches every URL; the
+prefix is what narrows it to a subtree.
+
 ## Security: verifying the connection origin
 
 Like `ws` (and browsers' WebSocket API), this server does **not** validate the
@@ -350,6 +379,14 @@ When `verifyClient` returns `false`, the client receives an HTTP `401` and the
 handshake is aborted. For real authentication, still validate a token/session
 inside your handler (or a pathless handler ahead of the route) rather than
 trusting `Origin` alone.
+
+Note that `verifyClient` only runs **once a route matches**: route matching
+happens first, and a request to an unregistered path is rejected with a `404`
+before the handshake begins, so the hook never sees it. This is not a gap —
+unmatched paths are already refused — but it means `verifyClient` gates the
+handshake of matched routes, not every incoming upgrade. Register a pathless
+handler if you need origin/auth logic to run for **every** matched connection
+regardless of route.
 
 ## API reference
 
