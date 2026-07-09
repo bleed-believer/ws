@@ -61,7 +61,18 @@ export class SocketServer extends EventEmitter<WebSocketServerEventMap> {
             // pipe) and must not crash the process. Destroy once the 404
             // response has drained, releasing the still-open read side.
             socket.once('finish', () => socket.destroy());
-            socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+
+            // A framed response with an explicit `Content-Length` so clients
+            // and proxies know the body is complete instead of waiting on it.
+            const body = 'Not Found';
+            socket.end(
+                'HTTP/1.1 404 Not Found\r\n' +
+                'Connection: close\r\n' +
+                'Content-Type: text/plain\r\n' +
+                `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+                '\r\n' +
+                body
+            );
             return;
         }
 

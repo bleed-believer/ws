@@ -378,7 +378,7 @@ describe('SocketServer', () => {
 
         t.assert.strictEqual(fake.upgrades.length, 0);
         t.assert.deepStrictEqual(socket.ends, [
-            'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
+            'HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nNot Found'
         ]);
         // The read side is released once the response drains.
         t.assert.strictEqual(socket.destroyCount, 1);
@@ -406,7 +406,7 @@ describe('SocketServer', () => {
 
         t.assert.strictEqual(fake.upgrades.length, 0);
         t.assert.deepStrictEqual(socket.ends, [
-            'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
+            'HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nNot Found'
         ]);
     });
 
@@ -432,7 +432,7 @@ describe('SocketServer', () => {
 
         t.assert.strictEqual(fake.upgrades.length, 0);
         t.assert.deepStrictEqual(socket.ends, [
-            'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'
+            'HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nNot Found'
         ]);
     });
 

@@ -154,6 +154,9 @@ describe('SocketServer (e2e)', () => {
 
         const [ , res ] = await once(client, 'unexpected-response');
         t.assert.strictEqual(res.statusCode, 404);
+        // The 404 is framed with an explicit Content-Length so the client
+        // reads a complete body instead of hanging on the connection.
+        t.assert.strictEqual(res.headers['content-length'], '9');
     });
 
     it('Passes control to the next matching handler with next()', async (t: it.TestContext) => {
