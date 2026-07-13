@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { once } from 'node:events';
 import WebSocket from 'ws';
 
-import { SocketServer, SocketServerRouter } from './index.js';
+import { SocketServer, SocketServerRouter } from './server.js';
 
 /**
  * Spins up a real HTTP server on a random local port, attaches a

@@ -63,14 +63,14 @@ npm complaining.
 
 ## Entrypoints
 
-The package exposes three subpaths. **Import from the narrowest one that covers
-your use case** — it's what keeps the server out of a browser bundle:
+The package exposes exactly two subpaths, and **no root entrypoint** — importing
+`@bleed-believer/ws` bare is an error. Pick the side you actually need; that's
+what keeps the server out of a browser bundle:
 
 | Import | Contents | Runs on |
 | --- | --- | --- |
 | `@bleed-believer/ws/client` | `SocketClient` and its types | Browser **and** Node |
 | `@bleed-believer/ws/server` | `SocketServer`, `SocketServerRouter` and their types | Node (requires `ws`) |
-| `@bleed-believer/ws` | Everything above, re-exported | Node (requires `ws`) |
 
 ```ts
 // Browser (Angular, React, Vite…) — bundles only the client:
@@ -80,15 +80,13 @@ import { SocketClient } from '@bleed-believer/ws/client';
 import { SocketServer, SocketServerRouter } from '@bleed-believer/ws/server';
 ```
 
-In a browser app, always import from `@bleed-believer/ws/client`. The root
-entrypoint re-exports the server too, so importing from `@bleed-believer/ws`
-drags `ws` and Node built-ins into the module graph and your bundler will fail
-to resolve them.
+There is deliberately no barrel that re-exports both: it would drag `ws` and Node
+built-ins into every browser bundle that touched the client. A server-side app
+that needs both sides just imports from both subpaths.
 
 One naming detail: `WebSocketObject` means different things on each side — the
 server's decorated `ws` socket vs. the minimal browser-socket shape the client
-drives — so the root entrypoint exports **neither**, rather than silently picking
-a winner. It's the one name the root doesn't re-export: take it from
+drives. Since there's no root barrel, the two never collide: take the type from
 `@bleed-believer/ws/client` or `@bleed-believer/ws/server`, whichever side you
 mean.
 
@@ -624,9 +622,10 @@ regardless of route.
 
 ## API reference
 
-Every export below is also re-exported from the root entrypoint, **except
-`WebSocketObject`** — the one name that means something different on each side,
-so it's only reachable from `/client` or `/server`.
+Every export lives on exactly one entrypoint; there is no root barrel that
+re-exports them (see [Entrypoints](#entrypoints)). Note `WebSocketObject`, which
+means something different on each side — the entrypoint you import it from is
+what picks which one you get.
 
 | Export | Entrypoint | Description |
 | --- | --- | --- |
@@ -635,7 +634,7 @@ so it's only reachable from `/client` or `/server`.
 | `RouteParameters<P>` | `/server` | Type helper inferring the params object for a route pattern `P`. |
 | `Server` | `/server` | Minimal `EventEmitter` shape (an `upgrade` event) required by `SocketServer`'s `server` option. |
 | `SocketServerOptions` | `/server` | Options accepted by `SocketServer`'s constructor: the required `server` plus a subset of `ws`'s `ServerOptions`. |
-| `WebSocketObject<T>` | `/server` **only** | A `ws` `WebSocket` decorated with the matched `path` and typed `params`. Not re-exported from the root — see the note above. |
+| `WebSocketObject<T>` | `/server` **only** | A `ws` `WebSocket` decorated with the matched `path` and typed `params`. The server's meaning of the name — see the note above. |
 | `WebSocketCallback<T>` | `/server` | Handler signature: `(ws, req, next) => unknown`. |
 | `SocketClient<T>` | `/client` | Reconnecting WebSocket client; `connect()` opens, `send(data)` writes, `close()` closes (cancelling a reconnection in flight), `status` / `listening` expose the state machine. Extends `EventEmitter`. |
 | `SocketClientOptions` | `/client` | Options accepted by `SocketClient`'s constructor: `messageType`, `reconnectMs`, `timeoutMs`, `protocols`. |
@@ -643,7 +642,7 @@ so it's only reachable from `/client` or `/server`.
 | `SocketClientMessageType<T>` | `/client` | Type helper resolving the `socketMessage` payload from the `messageType` option. |
 | `SocketClientEventEmitter<T>` | `/client` | The client's typed event map (`socketOpen`, `socketMessage`, `socketError`, `socketClose`). |
 | `SocketClientInject` | `/client` | Dependency overrides for `SocketClient` (a `WebSocket` constructor), used mainly in tests. |
-| `WebSocketObject` | `/client` **only** | The minimal browser-`WebSocket` shape the client drives. Not re-exported from the root — see the note above. |
+| `WebSocketObject` | `/client` **only** | The minimal browser-`WebSocket` shape the client drives. The client's meaning of the name — see the note above. |
 
 ## License
 

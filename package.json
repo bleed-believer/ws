@@ -26,10 +26,6 @@
     "node": ">=20"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
     "./client": {
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js"
@@ -39,8 +35,6 @@
       "import": "./dist/server.js"
     }
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "sideEffects": false,
   "files": [
     "dist",

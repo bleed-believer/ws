@@ -5,8 +5,8 @@
  *
  * This is the only entry point that exposes the client's `WebSocketObject` (the
  * minimal shape of a browser-style `WebSocket` it drives). The server's barrel
- * exports a different type under that same name, so the root barrel exports
- * neither and the two can never collide.
+ * exports a different type under that same name; the package has no root barrel
+ * that could re-export both, so the two can never collide.
  */
 export type {
     WebSocketObject,
