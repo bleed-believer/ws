@@ -1,7 +1,7 @@
 {
   "name": "@bleed-believer/ws",
   "version": "0.1.0",
-  "description": "Router-based WebSocket layer for ws, with path-to-regexp route matching and TypeScript support.",
+  "description": "Router-based WebSocket layer for ws, with path-to-regexp route matching, a reconnecting client, and TypeScript support.",
   "type": "module",
   "license": "MIT",
   "author": "sleep-written",

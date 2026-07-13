@@ -1,6 +1,6 @@
 import type { EventEmitterDescriptor, EventEmitterInject } from './interfaces/index.js';
 
-export class EventEmitter<T extends Record<string, unknown[]>> {
+export class EventEmitter<T extends { [K in keyof T]: unknown[]; }> {
     #maxListeners = 10;
     #injected: Required<EventEmitterInject>;
     #events = new Map<string, {

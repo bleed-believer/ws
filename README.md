@@ -8,6 +8,9 @@ It lets you attach a WebSocket router to any existing HTTP(S) server and dispatc
 upgrade requests to handlers based on the request URL — with typed route
 parameters, nested routers, and an Express-style `next()` chain.
 
+It also ships `SocketClient`, a WebSocket client driven by an explicit state
+machine, with typed events and auto-reconnection you can actually cancel.
+
 ## Features
 
 - **Attaches to an existing HTTP(S) server** — no separate port, just hooks into
@@ -27,6 +30,10 @@ parameters, nested routers, and an Express-style `next()` chain.
 - **Explicit lifecycle** — construction has no side effects; you `bind()` to
   start routing and `close()` to stop, without the class ever taking ownership
   of the HTTP server it attaches to.
+- **A client with a real lifecycle too** — `SocketClient` exposes its state as a
+  five-state machine, emits typed events, reconnects on its own if you ask it
+  to, and lets `close()` cancel a reconnection already in flight instead of
+  leaving a retry loop spinning forever.
 - **ESM-only, zero runtime deps** besides `path-to-regexp`, with `ws` as a peer
   dependency.
 
@@ -345,6 +352,181 @@ const app = new SocketServer({ server })
 A pathless handler registered **without** a prefix still matches every URL; the
 prefix is what narrows it to a subtree.
 
+## `SocketClient`
+
+`SocketClient` is the client side of the package: a thin, typed wrapper around a
+standard `WebSocket` that turns its lifecycle into an explicit state machine and
+re-emits its events through the same typed `EventEmitter` used across the
+package.
+
+```ts
+import { SocketClient } from '@bleed-believer/ws';
+
+const client = new SocketClient('ws://localhost:3000/chat/general', {
+    reconnectMs: 1_000,
+    timeoutMs: 5_000
+});
+
+client.on('socketOpen', () => console.log('connected'));
+client.on('socketMessage', (data, origin) => console.log(data, 'from', origin));
+client.on('socketError', (error) => console.error(error));
+client.on('socketClose', (code, reason, wasClean) => console.log('closed', code));
+
+await client.connect();
+client.send('hello');
+// …later
+await client.close();
+```
+
+```ts
+new SocketClient(url, options?, inject?)
+```
+
+- `url` — the endpoint to connect to, as a `string` or `URL`.
+- `options` — see [Options](#options-1) below. Invalid values are rejected at
+  construction with a `RangeError`, not silently coerced.
+- `inject` — optional dependency overrides (a `WebSocket` constructor), used
+  mainly in tests. Defaults to `globalThis.WebSocket`.
+
+Construction has **no side effects**: no socket is opened until you call
+`connect()`.
+
+### The state machine
+
+Every client is in exactly one of five states, readable at any time through
+`client.status` (and, as a shortcut, `client.listening === (status ===
+'CONNECTED')`):
+
+| Status | Meaning |
+| --- | --- |
+| `CLOSED` | Idle. The only state from which `connect()` is accepted. |
+| `CONNECTING` | A handshake requested by `connect()` is in flight. |
+| `CONNECTED` | The socket is open; messages flow. |
+| `RECONNECTING` | The peer dropped us and `reconnectMs` is set, so retries are in flight. |
+| `CLOSING` | A `close()` you requested is waiting for the socket's `close` event. |
+
+Every path back into `CLOSED` — a failed handshake, a deliberate `close()`, a
+drop the client gives up on — funnels through the same teardown, which detaches
+every listener and releases the socket. **A client that reaches `CLOSED` is
+always reusable**: calling `connect()` again on it opens a fresh connection.
+
+### Lifecycle
+
+```ts
+await client.connect(): Promise<void>
+```
+
+Opens the connection and resolves once the handshake completes. It **rejects**
+(never throws synchronously) if the handshake fails, if `timeoutMs` elapses
+first, or if the client isn't `CLOSED` — so a single `.catch()` covers every
+failure mode. A rejected `connect()` leaves the client back in `CLOSED`, ready
+to be retried.
+
+```ts
+await client.close(): Promise<void>
+```
+
+Closes the connection and resolves once the client has actually reached
+`CLOSED`. It's valid from any state except `CLOSED` (which rejects with *"already
+closed"*), and it does the right thing in each one:
+
+- from `CONNECTING`, it aborts the in-flight handshake (the pending `connect()`
+  rejects);
+- from `CONNECTED`, it closes the socket and waits for the real `close` event;
+- from `RECONNECTING`, it **cancels the retry loop** — including a retry that is
+  currently sleeping between attempts, which is woken up immediately rather than
+  waited out;
+- from `CLOSING`, it joins the close already in progress instead of starting a
+  second one.
+
+```ts
+client.send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void
+```
+
+Writes a frame to the peer. It's only legal while `CONNECTED`, and **throws**
+from any other status rather than dropping the frame on the floor. That includes
+`RECONNECTING`: nothing is buffered across connections, so a client that is
+retrying will refuse the write instead of pretending it went out. If you need
+writes to survive a drop, queue them yourself and flush on `socketOpen`, which
+fires again on every successful reconnection.
+
+```ts
+client.on('socketOpen', () => {
+    for (const frame of outbox.splice(0)) {
+        client.send(frame);
+    }
+});
+```
+
+### Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `socketOpen` | — | Every time a connection is established, including each successful reconnection. |
+| `socketMessage` | `(data, origin)` | An inbound frame. `data` is typed from `messageType` (see below). |
+| `socketError` | `(error: Error)` | A transport error while connected, and once per failed reconnection attempt. |
+| `socketClose` | `(code, reason, wasClean)` | The connection is over **for good** — emitted exactly once per connection. |
+
+The important subtlety is `socketClose`: it fires when the client lands in
+`CLOSED`, **not** every time the underlying socket drops. If `reconnectMs` is
+set and a retry succeeds, the consumer is never told the connection was lost —
+which is the whole point of asking for auto-reconnection. `socketClose` only
+arrives once the client gives up (i.e. you called `close()`) or when
+reconnection is off.
+
+### Reconnection
+
+Set `reconnectMs` and an unsolicited drop starts a retry loop: the client keeps
+attempting to reconnect, waiting `reconnectMs` between attempts, emitting
+`socketError` on each failure, until it gets back in — or until `close()` cancels
+it.
+
+```ts
+const client = new SocketClient('ws://localhost:3000/feed', { reconnectMs: 1_000 });
+
+await client.connect();
+
+// The server goes away. The client silently retries every second, and emits
+// `socketOpen` again once it's back. No `socketClose` in between.
+
+await client.close(); // stops the loop, even mid-retry, and resolves
+```
+
+The retry delay is **fixed**, not exponential, and there's no jitter: if a
+fleet of clients loses the same server, they all come back at the same cadence.
+Pick a `reconnectMs` that your server can absorb. `0` is accepted, but it retries
+as fast as the runtime allows and will hammer the peer — it must be a deliberate
+choice, which is why a `NaN` or a negative value is a `RangeError` instead of
+quietly behaving like `0`.
+
+### Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `messageType` | `'string' \| 'arraybuffer' \| 'blob'` | `'string'` | Sets the socket's `binaryType` and, more usefully, the type of `data` in `socketMessage`. |
+| `reconnectMs` | `number` | — | Milliseconds between reconnection attempts after an unsolicited drop. Omit it to not reconnect at all. Must be an integer `>= 0`. |
+| `timeoutMs` | `number` | — | How long a handshake may take before `connect()` gives up. Omit it and a peer that accepts the TCP connection but never completes the upgrade keeps `connect()` pending forever. Must be an integer `> 0`. |
+| `protocols` | `string[]` | — | Subprotocols offered during the handshake. |
+
+### Typed messages
+
+`messageType` isn't just a runtime flag: the payload of `socketMessage` is
+inferred from it, so binary streams don't need a cast.
+
+```ts
+const text = new SocketClient('ws://localhost:3000/feed');
+text.on('socketMessage', (data) => {
+    // data: string
+});
+
+const binary = new SocketClient('ws://localhost:3000/feed', {
+    messageType: 'arraybuffer'
+});
+binary.on('socketMessage', (data) => {
+    // data: ArrayBuffer
+});
+```
+
 ## Security: verifying the connection origin
 
 Like `ws` (and browsers' WebSocket API), this server does **not** validate the
@@ -401,6 +583,12 @@ regardless of route.
 | `SocketServerOptions` | Options accepted by `SocketServer`'s constructor: the required `server` plus a subset of `ws`'s `ServerOptions`. |
 | `WebSocketObject<T>` | A `ws` `WebSocket` decorated with the matched `path` and typed `params`. |
 | `WebSocketCallback<T>` | Handler signature: `(ws, req, next) => unknown`. |
+| `SocketClient<T>` | Reconnecting WebSocket client; `connect()` opens, `send(data)` writes, `close()` closes (cancelling a reconnection in flight), `status` / `listening` expose the state machine. Extends `EventEmitter`. |
+| `SocketClientOptions` | Options accepted by `SocketClient`'s constructor: `messageType`, `reconnectMs`, `timeoutMs`, `protocols`. |
+| `SocketClientStatus` | The five states: `'CLOSED' \| 'CONNECTING' \| 'CONNECTED' \| 'RECONNECTING' \| 'CLOSING'`. |
+| `SocketClientMessageType<T>` | Type helper resolving the `socketMessage` payload from the `messageType` option. |
+| `SocketClientEventEmitter<T>` | The client's typed event map (`socketOpen`, `socketMessage`, `socketError`, `socketClose`). |
+| `SocketClientInject` | Dependency overrides for `SocketClient` (a `WebSocket` constructor), used mainly in tests. |
 
 ## License
 
