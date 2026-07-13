@@ -5,9 +5,6 @@
  * client, along with every public type declared under their `./interfaces`.
  */
 
-export { SocketServer } from './socket-server/index.js';
-export { SocketServerRouter } from './socket-server-router/index.js';
-export { SocketClient } from './socket-client/index.js';
 
 export type {
     Server,
@@ -15,8 +12,12 @@ export type {
     WebSocketCallback,
     SocketServerOptions,
 } from './socket-server/index.js';
+export { SocketServer } from './socket-server/index.js';
 
-export type { RouteParameters } from './socket-server-router/index.js';
+export type {
+    RouteParameters
+} from './socket-server-router/index.js';
+export { SocketServerRouter } from './socket-server-router/index.js';
 
 /**
  * `WebSocketObject` is deliberately left out: the client declares its own
@@ -31,3 +32,4 @@ export type {
     SocketClientMessageType,
     SocketClientEventEmitter,
 } from './socket-client/index.js';
+export { SocketClient } from './socket-client/index.js';
