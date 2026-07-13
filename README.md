@@ -9,7 +9,10 @@ upgrade requests to handlers based on the request URL — with typed route
 parameters, nested routers, and an Express-style `next()` chain.
 
 It also ships `SocketClient`, a WebSocket client driven by an explicit state
-machine, with typed events and auto-reconnection you can actually cancel.
+machine, with typed events and auto-reconnection you can actually cancel. The
+client is published under its own entrypoint and depends on nothing but the
+standard `WebSocket` API, so it runs unchanged in the browser — Angular, React,
+Vite, or plain ESM — without pulling `ws` or any Node built-in into your bundle.
 
 ## Features
 
@@ -34,23 +37,66 @@ machine, with typed events and auto-reconnection you can actually cancel.
   five-state machine, emits typed events, reconnects on its own if you ask it
   to, and lets `close()` cancel a reconnection already in flight instead of
   leaving a retry loop spinning forever.
-- **ESM-only, zero runtime deps** besides `path-to-regexp`, with `ws` as a peer
-  dependency.
+- **A browser-ready client** — `@bleed-believer/ws/client` is a separate
+  entrypoint built on the standard `WebSocket` API, with no Node built-ins and
+  no `ws` in its import graph, so a front-end bundle only ships the client.
+- **ESM-only, zero runtime deps** besides `path-to-regexp` (server-side only),
+  with `ws` as an *optional* peer dependency.
 
 ## Installation
+
+For the server (Node.js 20+):
 
 ```bash
 npm install @bleed-believer/ws ws
 ```
 
-`ws` is a peer dependency, so it must be installed alongside this package.
-Node.js 20+ is required.
+For the client only — a browser app, e.g. Angular:
+
+```bash
+npm install @bleed-believer/ws
+```
+
+`ws` is an optional peer dependency: it's required by the server, and never
+loaded by the client, so a front-end project can leave it out entirely without
+npm complaining.
+
+## Entrypoints
+
+The package exposes three subpaths. **Import from the narrowest one that covers
+your use case** — it's what keeps the server out of a browser bundle:
+
+| Import | Contents | Runs on |
+| --- | --- | --- |
+| `@bleed-believer/ws/client` | `SocketClient` and its types | Browser **and** Node |
+| `@bleed-believer/ws/server` | `SocketServer`, `SocketServerRouter` and their types | Node (requires `ws`) |
+| `@bleed-believer/ws` | Everything above, re-exported | Node (requires `ws`) |
+
+```ts
+// Browser (Angular, React, Vite…) — bundles only the client:
+import { SocketClient } from '@bleed-believer/ws/client';
+
+// Node server:
+import { SocketServer, SocketServerRouter } from '@bleed-believer/ws/server';
+```
+
+In a browser app, always import from `@bleed-believer/ws/client`. The root
+entrypoint re-exports the server too, so importing from `@bleed-believer/ws`
+drags `ws` and Node built-ins into the module graph and your bundler will fail
+to resolve them.
+
+One naming detail: `WebSocketObject` means different things on each side — the
+server's decorated `ws` socket vs. the minimal browser-socket shape the client
+drives — so the root entrypoint exports **neither**, rather than silently picking
+a winner. It's the one name the root doesn't re-export: take it from
+`@bleed-believer/ws/client` or `@bleed-believer/ws/server`, whichever side you
+mean.
 
 ## Quick start
 
 ```ts
 import { createServer } from 'node:http';
-import { SocketServer, SocketServerRouter } from '@bleed-believer/ws';
+import { SocketServer, SocketServerRouter } from '@bleed-believer/ws/server';
 
 const server = createServer();
 
@@ -214,7 +260,7 @@ to call it yourself.
 #### Nesting routers
 
 ```ts
-import { SocketServer, SocketServerRouter } from '@bleed-believer/ws';
+import { SocketServer, SocketServerRouter } from '@bleed-believer/ws/server';
 
 const usersRouter = new SocketServerRouter()
     .use('/:id', (ws) => {
@@ -359,8 +405,12 @@ standard `WebSocket` that turns its lifecycle into an explicit state machine and
 re-emits its events through the same typed `EventEmitter` used across the
 package.
 
+It talks to `globalThis.WebSocket` and nothing else, so the same code runs in the
+browser and in Node 22+ (which ships a global `WebSocket`). Import it from
+`@bleed-believer/ws/client` — see [Entrypoints](#entrypoints).
+
 ```ts
-import { SocketClient } from '@bleed-believer/ws';
+import { SocketClient } from '@bleed-believer/ws/client';
 
 const client = new SocketClient('ws://localhost:3000/chat/general', {
     reconnectMs: 1_000,
@@ -574,21 +624,26 @@ regardless of route.
 
 ## API reference
 
-| Export | Description |
-| --- | --- |
-| `SocketServer` | Router-based server; `use(router)` mounts routes, `bind()` starts routing on the HTTP(S) server passed at construction, `close()` detaches and drops live connections. Extends `EventEmitter`. |
-| `SocketServerRouter` | Composable route registry (`use`, `routes`). |
-| `RouteParameters<P>` | Type helper inferring the params object for a route pattern `P`. |
-| `Server` | Minimal `EventEmitter` shape (an `upgrade` event) required by `SocketServer`'s `server` option. |
-| `SocketServerOptions` | Options accepted by `SocketServer`'s constructor: the required `server` plus a subset of `ws`'s `ServerOptions`. |
-| `WebSocketObject<T>` | A `ws` `WebSocket` decorated with the matched `path` and typed `params`. |
-| `WebSocketCallback<T>` | Handler signature: `(ws, req, next) => unknown`. |
-| `SocketClient<T>` | Reconnecting WebSocket client; `connect()` opens, `send(data)` writes, `close()` closes (cancelling a reconnection in flight), `status` / `listening` expose the state machine. Extends `EventEmitter`. |
-| `SocketClientOptions` | Options accepted by `SocketClient`'s constructor: `messageType`, `reconnectMs`, `timeoutMs`, `protocols`. |
-| `SocketClientStatus` | The five states: `'CLOSED' \| 'CONNECTING' \| 'CONNECTED' \| 'RECONNECTING' \| 'CLOSING'`. |
-| `SocketClientMessageType<T>` | Type helper resolving the `socketMessage` payload from the `messageType` option. |
-| `SocketClientEventEmitter<T>` | The client's typed event map (`socketOpen`, `socketMessage`, `socketError`, `socketClose`). |
-| `SocketClientInject` | Dependency overrides for `SocketClient` (a `WebSocket` constructor), used mainly in tests. |
+Every export below is also re-exported from the root entrypoint, **except
+`WebSocketObject`** — the one name that means something different on each side,
+so it's only reachable from `/client` or `/server`.
+
+| Export | Entrypoint | Description |
+| --- | --- | --- |
+| `SocketServer` | `/server` | Router-based server; `use(router)` mounts routes, `bind()` starts routing on the HTTP(S) server passed at construction, `close()` detaches and drops live connections. Extends `EventEmitter`. |
+| `SocketServerRouter` | `/server` | Composable route registry (`use`, `routes`). |
+| `RouteParameters<P>` | `/server` | Type helper inferring the params object for a route pattern `P`. |
+| `Server` | `/server` | Minimal `EventEmitter` shape (an `upgrade` event) required by `SocketServer`'s `server` option. |
+| `SocketServerOptions` | `/server` | Options accepted by `SocketServer`'s constructor: the required `server` plus a subset of `ws`'s `ServerOptions`. |
+| `WebSocketObject<T>` | `/server` **only** | A `ws` `WebSocket` decorated with the matched `path` and typed `params`. Not re-exported from the root — see the note above. |
+| `WebSocketCallback<T>` | `/server` | Handler signature: `(ws, req, next) => unknown`. |
+| `SocketClient<T>` | `/client` | Reconnecting WebSocket client; `connect()` opens, `send(data)` writes, `close()` closes (cancelling a reconnection in flight), `status` / `listening` expose the state machine. Extends `EventEmitter`. |
+| `SocketClientOptions` | `/client` | Options accepted by `SocketClient`'s constructor: `messageType`, `reconnectMs`, `timeoutMs`, `protocols`. |
+| `SocketClientStatus` | `/client` | The five states: `'CLOSED' \| 'CONNECTING' \| 'CONNECTED' \| 'RECONNECTING' \| 'CLOSING'`. |
+| `SocketClientMessageType<T>` | `/client` | Type helper resolving the `socketMessage` payload from the `messageType` option. |
+| `SocketClientEventEmitter<T>` | `/client` | The client's typed event map (`socketOpen`, `socketMessage`, `socketError`, `socketClose`). |
+| `SocketClientInject` | `/client` | Dependency overrides for `SocketClient` (a `WebSocket` constructor), used mainly in tests. |
+| `WebSocketObject` | `/client` **only** | The minimal browser-`WebSocket` shape the client drives. Not re-exported from the root — see the note above. |
 
 ## License
 
